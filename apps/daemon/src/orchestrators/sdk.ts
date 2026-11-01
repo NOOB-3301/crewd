@@ -1,4 +1,4 @@
-import type { Caps, Ev, ModeId, ModeInfo, PermissionOption } from '@crewd/protocol'
+import type { Caps, Ev, ModeId, ModeInfo, ModelInfo, PermissionOption } from '@crewd/protocol'
 import { AsyncQueue } from '../util/async-queue.ts'
 import { Orchestrator, summary, type Image } from './orchestrator.ts'
 
@@ -21,22 +21,40 @@ const OPTIONS: PermissionOption[] = [
   { id: 'deny', label: 'Deny', kind: 'deny' },
 ]
 
+/** Claude's and Qoder's ModelInfo share these fields. */
+type SdkModel = { value: string; displayName?: string; description?: string; resolvedModel?: string }
+export const toModelInfo = (m: SdkModel): ModelInfo => ({ id: m.value, label: m.displayName || m.value, description: m.description || undefined })
+
+export function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  const t = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms}ms`)), ms)
+  })
+  return Promise.race([p, t]).finally(() => clearTimeout(timer))
+}
+
 // Shared plumbing for vendor SDKs whose query() takes an async iterable of user messages
 // and yields a stream of messages (Claude Agent SDK, and Qoder which mirrors it).
 export abstract class SdkOrchestrator extends Orchestrator {
   protected inbox = new AsyncQueue<UserContent>()
   protected outbox = new AsyncQueue<Ev>()
   protected mode: ModeId = 'auto'
+  protected model?: string
+  protected models: ModelInfo[] = []
+  /** id -> wire model id (Claude: 'haiku' -> 'claude-haiku-...'), to read what init reports */
+  private resolved = new Map<string, string>()
   private pump?: Promise<void>
 
   async start() {
     this.emitMode(this.startMode ?? 'auto')
+    this.model = this.startModel
     this.pump = (async () => {
       try {
         for await (const msg of this.runQuery()) {
           const id = this.readNativeId(msg)
           if (id) this.nativeId = id
           this.syncMode(msg)
+          this.syncModel(msg)
           for (const ev of this.toEv(msg)) this.outbox.push(ev)
         }
       } catch (err) {
@@ -72,6 +90,36 @@ export abstract class SdkOrchestrator extends Orchestrator {
   protected emitMode(mode: ModeId) {
     this.mode = mode
     this.outbox.push({ type: 'mode', mode, available: CLAUDE_MODES })
+  }
+
+  protected emitModel(model: string | undefined) {
+    this.model = model && this.toId(model)
+    this.outbox.push({ type: 'model', model: this.model, available: this.models })
+  }
+
+  /** init reports a display name (Qoder) or wire id (Claude); map it to a list id, keeping the current pick when it matches. */
+  private toId(reported: string): string {
+    const is = (m: ModelInfo) => m.id === reported || m.label === reported || this.resolved.get(m.id) === reported
+    const cur = this.models.find((m) => m.id === this.model)
+    return cur && is(cur) ? cur.id : (this.models.find(is)?.id ?? reported)
+  }
+
+  /** Fills the switchable list once the SDK answers; a failure only hides /model. */
+  protected loadModels(list: Promise<SdkModel[]>) {
+    list.then(
+      (l) => {
+        this.models = l.map(toModelInfo)
+        this.resolved = new Map(l.flatMap((m) => (m.resolvedModel ? [[m.value, m.resolvedModel]] : [])))
+        this.emitModel(this.model)
+      },
+      () => {},
+    )
+  }
+
+  // init (each turn) carries the model actually in use, e.g. after a switch inside the CLI.
+  private syncModel(msg: unknown) {
+    const m = msg as { type?: string; subtype?: string; model?: unknown }
+    if (m?.type === 'system' && m.subtype === 'init' && typeof m.model === 'string' && this.toId(m.model) !== this.model) this.emitModel(m.model)
   }
 
   // init (each turn) and status messages carry the CLI's actual mode: catches a refused `auto` and mode

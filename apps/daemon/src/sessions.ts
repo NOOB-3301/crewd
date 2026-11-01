@@ -4,6 +4,7 @@ import { isAbsolute } from 'node:path'
 import type { CreateSessionBody, Harness, ImageRef, LogLine, ModeId, SessionMeta, SessionStatus } from '@crewd/protocol'
 import * as log from './log.ts'
 import { mcpFor } from './mcp.ts'
+import * as models from './models.ts'
 import type { Image, Orchestrator, PermissionAsk } from './orchestrators/orchestrator.ts'
 import * as registry from './registry.ts'
 
@@ -101,6 +102,7 @@ async function stop(e: Entry) {
 function startOrch(e: Entry, h: Harness) {
   const o = registry.create(h, e.meta.cwd, e.meta.nativeId, mcpFor(e.meta.mcp))
   o.startMode = e.meta.permissionMode
+  o.startModel = e.meta.model
   o.askUser = (req, signal) => ask(e, req, signal)
   e.orch = o
   // ready never rejects: a failed start is shown in the chat, not as an HTTP error.
@@ -131,6 +133,14 @@ async function pump(e: Entry, o: Orchestrator) {
         e.meta.permissionMode = ev.mode
         log.writeMeta(e.meta)
       }
+      if (ev.type === 'model') {
+        if (ev.model !== undefined && ev.model !== e.meta.model) {
+          e.meta.model = ev.model
+          log.writeMeta(e.meta)
+        }
+        const h = registry.get(e.meta.harness)
+        if (h) models.remember(h, e.meta.cwd, ev.available)
+      }
       emit(e, { kind: 'event', ev })
       if (ev.type === 'turn_end' && busy(e.meta.status)) {
         setStatus(e, 'idle')
@@ -155,6 +165,7 @@ export async function create(body: CreateSessionBody): Promise<SessionMeta> {
   if (body.mcp !== undefined && !(Array.isArray(body.mcp) && body.mcp.every(str)))
     throw new HttpError(400, 'mcp must be an array of names')
   if (body.permissionMode !== undefined && !str(body.permissionMode)) throw new HttpError(400, 'permissionMode must be a string')
+  if (body.model !== undefined && !(str(body.model) && body.model)) throw new HttpError(400, 'model must be a non-empty string')
 
   const now = Date.now()
   const meta: SessionMeta = {
@@ -168,6 +179,7 @@ export async function create(body: CreateSessionBody): Promise<SessionMeta> {
     source: 'crewd',
     mcp: body.mcp,
     permissionMode: body.permissionMode,
+    model: body.model,
   }
   const e: Entry = { meta, subs: new Set(), pending: new Map() }
   live.set(meta.id, e)
@@ -254,6 +266,21 @@ export async function setMode(id: string, mode: unknown): Promise<SessionMeta> {
   await e.ready
   if (!e.orch) throw new HttpError(409, 'session failed to start')
   await e.orch.setMode(mode as ModeId).catch((err) => {
+    throw new HttpError(400, String(err?.message ?? err))
+  })
+  return e.meta
+}
+
+export async function setModel(id: string, model: unknown): Promise<SessionMeta> {
+  const e = entry(id)
+  if (!str(model) || !model) throw new HttpError(400, 'model is required')
+  if (e.meta.status === 'dead') throw new HttpError(409, 'session is closed')
+  const h = registry.get(e.meta.harness)
+  if (!h) throw new HttpError(400, `unknown harness ${e.meta.harness}`)
+  if (!e.orch) startOrch(e, h)
+  await e.ready
+  if (!e.orch) throw new HttpError(409, 'session failed to start')
+  await e.orch.setModel(model).catch((err) => {
     throw new HttpError(400, String(err?.message ?? err))
   })
   return e.meta

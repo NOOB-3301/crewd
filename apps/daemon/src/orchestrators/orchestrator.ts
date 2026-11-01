@@ -1,4 +1,4 @@
-import type { Caps, Ev, Harness, LogLine, McpServer, ModeId, PermissionOption, SessionMeta } from '@crewd/protocol'
+import type { Caps, Ev, Harness, LogLine, McpServer, ModeId, ModelList, PermissionOption, SessionMeta } from '@crewd/protocol'
 
 /** A permission question as the orchestrator asks it; sessions.ts adds the requestId and relays it. */
 export type PermissionAsk = { tool: string; title?: string; input?: unknown; options: PermissionOption[] }
@@ -17,6 +17,8 @@ export abstract class Orchestrator {
   nativeId?: string
   /** Mode to start in (create body or the session's last mode); harness default when undefined. */
   startMode?: ModeId
+  /** Model to start with (create body or the session's last model); harness default when undefined. */
+  startModel?: string
   /** Set by sessions.ts. Resolves with the chosen option id, or undefined when cancelled (interrupt, delete, agent abort). */
   askUser: (req: PermissionAsk, signal?: AbortSignal) => Promise<string | undefined> = async () => undefined
 
@@ -33,6 +35,9 @@ export abstract class Orchestrator {
   abstract send(text: string, images?: Image[]): Promise<void>
   abstract interrupt(): Promise<void>
   abstract setMode(mode: ModeId): Promise<void>
+  async setModel(_model: string): Promise<void> {
+    throw new Error(`${this.harness.label} can't switch models`)
+  }
   abstract close(): Promise<void>
   abstract events(): AsyncIterable<Ev>
   abstract caps(): Caps
@@ -44,9 +49,14 @@ export abstract class Orchestrator {
   static async loadHistory(_h: Harness, _nativeId: string): Promise<LogLine[]> {
     return []
   }
+  /** Models the harness offers in cwd, without a crewd session (may start a short-lived agent). */
+  static async listModels(_h: Harness, _cwd: string): Promise<ModelList> {
+    return { models: [] }
+  }
 }
 
 export type OrchestratorClass = (new (h: Harness, cwd: string, sessionId?: string, mcp?: McpServer[]) => Orchestrator) & {
   listSessions(h: Harness, cwd?: string): Promise<SessionMeta[]>
   loadHistory(h: Harness, nativeId: string): Promise<LogLine[]>
+  listModels(h: Harness, cwd: string): Promise<ModelList>
 }

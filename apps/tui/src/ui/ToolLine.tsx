@@ -21,6 +21,14 @@ const clip = (s: string, n = 20) => {
   return lines.length > n ? [...lines.slice(0, n), `… ${lines.length - n} more lines (enter again for all)`].join('\n') : s
 }
 
+const lineCount = (s: string) => s.split('\n').length
+/** Whether the open view cuts anything, i.e. a 'full output' step would show more. */
+export function clipped(t: ToolItem): boolean {
+  const cs = changes(t.input)
+  const inputLong = cs ? cs.reduce((n, c) => n + (c.old ? lineCount(c.old) : 0) + lineCount(c.new), 0) + cs.length - 1 > 40 : lineCount(show(t.input)) > 20
+  return inputLong || (t.output !== undefined && lineCount(show(t.output)) > 20)
+}
+
 type Change = { old: string; new: string }
 const str = (v: unknown) => (typeof v === 'string' ? v : undefined)
 
@@ -60,7 +68,9 @@ function Diff({ cs, max }: { cs: Change[]; max: number }) {
   )
 }
 
-export function ToolLine({ t, open, full, selected, width }: { t: ToolItem; open: boolean; full?: boolean; selected: boolean; width: number }) {
+export function ToolLine({ t, open, full, selected, width, onClick }: {
+  t: ToolItem; open: boolean; full?: boolean; selected: boolean; width: number; onClick?: () => void
+}) {
   const cut = (v: unknown) => (full ? show(v) : clip(show(v)))
   const mark = t.status === 'start' ? '…' : t.status === 'error' ? '✗' : '✓'
   const markColor = t.status === 'start' ? theme.muted : t.status === 'error' ? theme.danger : theme.ok
@@ -69,7 +79,8 @@ export function ToolLine({ t, open, full, selected, width }: { t: ToolItem; open
   const argWidth = Math.max(8, width - t.name.length - 16)
   return (
     <box flexDirection="column" paddingLeft={2}>
-      <text>
+      {/* click target is the header only, so drag-selecting the output to copy it does not fold it */}
+      <text onMouseDown={onClick}>
         <span fg={selected ? undefined : theme.muted}>{open ? '▾ ' : '▸ '}</span>
         {selected ? <b>{t.name}</b> : t.name}
         <span fg={theme.muted}>  {pad(mainArg(t.input), argWidth)} </span>

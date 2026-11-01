@@ -1,8 +1,12 @@
+import { statSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { isAbsolute } from 'node:path'
 import type { HarnessInfo, LogLine } from '@crewd/protocol'
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import * as log from './log.ts'
 import { readMcp, writeMcp } from './mcp.ts'
+import * as models from './models.ts'
 import * as registry from './registry.ts'
 import * as sessions from './sessions.ts'
 import * as usage from './usage.ts'
@@ -41,6 +45,15 @@ app.get('/harnesses/:id/sessions', async (c) =>
   c.json(await sessions.listForHarness(harness(c.req.param('id')), c.req.query('cwd'))),
 )
 
+app.get('/harnesses/:id/models', async (c) => {
+  const h = harness(c.req.param('id'))
+  if (!registry.installed(h)) throw new HttpError(400, `${h.label} is not installed`)
+  const cwd = c.req.query('cwd') || homedir()
+  if (!isAbsolute(cwd) || !statSync(cwd, { throwIfNoEntry: false })?.isDirectory())
+    throw new HttpError(400, 'cwd must be an existing absolute directory')
+  return c.json(await models.list(h, cwd, c.req.query('refresh') === '1'))
+})
+
 app.post('/sessions', async (c) => c.json(await sessions.create(await body(c)), 201))
 app.get('/sessions', (c) => c.json(sessions.listOurs()))
 
@@ -71,6 +84,7 @@ app.post('/sessions/:id/permissions/:requestId', async (c) => {
 })
 
 app.post('/sessions/:id/mode', async (c) => c.json(await sessions.setMode(c.req.param('id'), (await body(c)).mode)))
+app.post('/sessions/:id/model', async (c) => c.json(await sessions.setModel(c.req.param('id'), (await body(c)).model)))
 
 app.post('/sessions/:id/interrupt', async (c) => c.json(await sessions.interrupt(c.req.param('id'))))
 

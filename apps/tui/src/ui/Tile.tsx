@@ -8,7 +8,7 @@ import { Markdown } from './Markdown.tsx'
 import { PermissionPrompt } from './PermissionPrompt.tsx'
 import { Rail } from './Rail.tsx'
 import { ThinkingLine } from './ThinkingLine.tsx'
-import { ToolLine } from './ToolLine.tsx'
+import { clipped, ToolLine } from './ToolLine.tsx'
 import { accent, glyph, shortPath, theme } from './theme.ts'
 
 const preview = (items: Item[]) => {
@@ -50,7 +50,8 @@ export function Tile({ t, n, focused, full, hidden, logFocus, active, width, rep
   function cycle(key: string) {
     const without = (set: Set<string>) => { const x = new Set(set); x.delete(key); return x }
     if (!open.has(key)) return setOpen(new Set(open).add(key))
-    if (isTool(key) && !whole.has(key)) return setWhole(new Set(whole).add(key))
+    const item = selectable.find((x) => x.key === key) as Item | undefined
+    if (item?.k === 'tool' && clipped(item) && !whole.has(key)) return setWhole(new Set(whole).add(key))
     setOpen(without(open))
     setWhole(without(whole))
   }
@@ -124,8 +125,8 @@ export function Tile({ t, n, focused, full, hidden, logFocus, active, width, rep
                 it.k === 'text' ? <Markdown key={j} text={it.text} streaming={it.open} />
                 : it.k === 'thinking' ? <box key={it.key} id={it.key}><ThinkingLine text={it.text} open={showThinking || open.has(it.key)} selected={selKey === it.key} /></box>
                 : (
-                  <box key={it.key} id={it.key} onMouseDown={() => click(it.key)}>
-                    <ToolLine t={it} open={open.has(it.key)} full={whole.has(it.key)} selected={selKey === it.key} width={w} />
+                  <box key={it.key} id={it.key}>
+                    <ToolLine t={it} open={open.has(it.key)} full={whole.has(it.key)} selected={selKey === it.key} width={w} onClick={() => click(it.key)} />
                   </box>
                 ),
               )}

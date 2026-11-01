@@ -19,7 +19,7 @@ import {
   type SessionUpdate,
   type ToolCallUpdate,
 } from '@agentclientprotocol/sdk'
-import type { Caps, Ev, Harness, LogLine, McpServer, ModeId, ModeInfo, PermissionOption, SessionMeta } from '@crewd/protocol'
+import type { Caps, Ev, Harness, LogLine, McpServer, ModeId, ModeInfo, ModelInfo, ModelList, PermissionOption, SessionMeta } from '@crewd/protocol'
 import { AsyncQueue } from '../util/async-queue.ts'
 import { Orchestrator, summary, type Image } from './orchestrator.ts'
 
@@ -154,6 +154,18 @@ function toolEnd(u: ToolCallUpdate): Ev[] {
   return [{ type: 'tool', id: u.toolCallId, name: toolName(u), status, output: u.rawOutput ?? u.content }]
 }
 
+type ConfigHolder = { configOptions?: SessionConfigOption[] | null }
+
+/** A select config option of one category (e.g. 'mode', 'model'): its id, flattened choices and current value. */
+function readSelect(r: ConfigHolder, category: string) {
+  const cfg = r.configOptions?.find((o) => o.category === category)
+  if (cfg?.type !== 'select') return undefined
+  const list: ModelInfo[] = cfg.options
+    .flatMap((o) => ('options' in o ? o.options : [o]))
+    .map((o) => ({ id: o.value, label: o.name, description: o.description ?? undefined }))
+  return { configId: cfg.id, list, current: cfg.currentValue }
+}
+
 const KIND: Record<PermissionOptionKind, PermissionOption['kind']> = {
   allow_once: 'allow',
   allow_always: 'always',
@@ -170,6 +182,8 @@ export class AcpOrchestrator extends Orchestrator {
   private modes?: ModeInfo[]
   /** set when the agent exposes modes as a 'mode' config option (newer agents, e.g. OpenCode) instead of `modes` */
   private modeConfigId?: string
+  private models: ModelInfo[] = []
+  private modelConfigId?: string
 
   async start() {
     const agent = (this.agent = spawnAgent(
@@ -212,20 +226,33 @@ export class AcpOrchestrator extends Orchestrator {
       res = created
     }
     const current = this.readModes(res)
-    if (current === undefined) return // no modes advertised: no mode event
-    if (this.startMode && this.startMode !== current && this.modes!.some((m) => m.id === this.startMode)) await this.setMode(this.startMode)
-    else this.out.push({ type: 'mode', mode: current, available: this.modes! })
+    // no modes advertised: no mode event
+    if (current !== undefined) {
+      if (this.startMode && this.startMode !== current && this.modes!.some((m) => m.id === this.startMode)) await this.setMode(this.startMode)
+      else this.out.push({ type: 'mode', mode: current, available: this.modes! })
+    }
+    const model = this.readModels(res)
+    if (model === undefined) return // no 'model' config option: no /model
+    if (this.startModel && this.startModel !== model && this.models.some((m) => m.id === this.startModel)) await this.setModel(this.startModel)
+    else this.out.push({ type: 'model', model, available: this.models })
+  }
+
+  /** Stores the advertised models and returns the current one; undefined when the agent has no 'model' config option. */
+  private readModels(r: ConfigHolder): string | undefined {
+    const sel = readSelect(r, 'model')
+    if (!sel) return undefined
+    this.modelConfigId = sel.configId
+    this.models = sel.list
+    return sel.current
   }
 
   /** Stores the advertised modes and returns the current one; a 'mode' config option wins over legacy `modes`. */
-  private readModes(r: { modes?: SessionModeState | null; configOptions?: SessionConfigOption[] | null }): ModeId | undefined {
-    const cfg = r.configOptions?.find((o) => o.category === 'mode')
-    if (cfg?.type === 'select') {
-      this.modeConfigId = cfg.id
-      this.modes = cfg.options
-        .flatMap((o) => ('options' in o ? o.options : [o]))
-        .map((o) => ({ id: o.value, label: o.name, description: o.description ?? undefined }))
-      return cfg.currentValue
+  private readModes(r: ConfigHolder & { modes?: SessionModeState | null }): ModeId | undefined {
+    const sel = readSelect(r, 'mode')
+    if (sel) {
+      this.modeConfigId = sel.configId
+      this.modes = sel.list
+      return sel.current
     }
     if (!r.modes) return undefined
     this.modes = r.modes.availableModes.map((m) => ({ id: m.id, label: m.name, description: m.description ?? undefined }))
@@ -239,6 +266,8 @@ export class AcpOrchestrator extends Orchestrator {
     if (u.sessionUpdate === 'config_option_update') {
       const mode = this.readModes(u)
       if (mode !== undefined) this.out.push({ type: 'mode', mode, available: this.modes! })
+      const model = this.readModels(u)
+      if (model !== undefined) this.out.push({ type: 'model', model, available: this.models })
     }
     for (const ev of updateToEv(u)) this.out.push(ev)
   }
@@ -286,6 +315,14 @@ export class AcpOrchestrator extends Orchestrator {
     this.out.push({ type: 'mode', mode, available: this.modes })
   }
 
+  async setModel(model: string) {
+    if (!this.agent || !this.nativeId) throw new Error('ACP session not started')
+    if (!this.modelConfigId) throw new Error(`${this.harness.label} can't switch models`)
+    if (!this.models.some((m) => m.id === model)) throw new Error(`${this.harness.label} has no model ${model}`)
+    await this.agent.conn.agent.request(methods.agent.session.setConfigOption, { sessionId: this.nativeId, configId: this.modelConfigId, value: model })
+    this.out.push({ type: 'model', model, available: this.models })
+  }
+
   async close() {
     this.closing = true
     await this.agent?.close()
@@ -316,6 +353,19 @@ export class AcpOrchestrator extends Orchestrator {
         updatedAt: s.updatedAt ? Date.parse(s.updatedAt) : undefined,
         source: 'native' as const,
       }))
+    })
+  }
+
+  // ACP lists models only on a session: open a throwaway one, then delete it (or at least close it) when the agent can.
+  static override async listModels(h: Harness, cwd: string): Promise<ModelList> {
+    return withAgent(h, cwd, 30000, async (a, caps) => {
+      const res = await a.conn.agent.request(methods.agent.session.new, { cwd, mcpServers: [] })
+      const sc = caps.sessionCapabilities
+      const sessionId = res.sessionId
+      if (sc?.delete) await a.conn.agent.request(methods.agent.session.delete, { sessionId }).catch(() => {})
+      else if (sc?.close) await a.conn.agent.request(methods.agent.session.close, { sessionId }).catch(() => {})
+      const sel = readSelect(res, 'model')
+      return sel ? { models: sel.list, current: sel.current } : { models: [] }
     })
   }
 

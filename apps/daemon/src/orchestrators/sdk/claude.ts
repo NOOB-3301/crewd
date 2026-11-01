@@ -7,8 +7,9 @@ import {
   type Query,
   type SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk'
-import type { Cmd, Ev, Harness, LogLine, ModeId, SessionMeta } from '@crewd/protocol'
-import { SdkOrchestrator } from '../sdk.ts'
+import type { Cmd, Ev, Harness, LogLine, ModeId, ModelList, SessionMeta } from '@crewd/protocol'
+import { AsyncQueue } from '../../util/async-queue.ts'
+import { SdkOrchestrator, toModelInfo, withTimeout } from '../sdk.ts'
 
 const str = (v: unknown): v is string => typeof v === 'string'
 const toCmd = (c: any): Cmd => (str(c) ? { name: c } : { name: c?.name ?? '', description: c?.description || undefined, hint: c?.argumentHint || undefined })
@@ -71,6 +72,7 @@ export class ClaudeSdkOrchestrator extends SdkOrchestrator {
       options: {
         cwd: this.cwd,
         resume: this.sessionId,
+        ...(this.startModel && { model: this.startModel }),
         mcpServers: Object.fromEntries(this.mcp.map((s) => [s.name, { command: s.command, args: s.args, env: s.env }])),
         permissionMode: this.mode as PermissionMode,
         allowDangerouslySkipPermissions: true, // lets setMode reach bypassPermissions; the TUI confirms it
@@ -82,6 +84,7 @@ export class ClaudeSdkOrchestrator extends SdkOrchestrator {
     })
     // The list with descriptions is ready before the first message; init only brings bare names later.
     this.q.supportedCommands().then((l) => this.outbox.push({ type: 'commands', list: l.map(toCmd) }), () => {})
+    this.loadModels(this.q.supportedModels())
     return this.q
   }
 
@@ -93,6 +96,12 @@ export class ClaudeSdkOrchestrator extends SdkOrchestrator {
     if (!this.q) throw new Error('Claude session not started')
     await this.q.setPermissionMode(mode as PermissionMode)
     this.emitMode(mode)
+  }
+
+  async setModel(model: string) {
+    if (!this.q) throw new Error('Claude session not started')
+    await this.q.setModel(model)
+    this.emitModel(model)
   }
 
   // Ending the input stream lets an idle CLI exit cleanly; force-kill if a turn keeps it busy.
@@ -128,6 +137,18 @@ export class ClaudeSdkOrchestrator extends SdkOrchestrator {
         updatedAt: s.lastModified,
         source: 'native',
       }))
+  }
+
+  // A query that never gets a prompt: the CLI starts and answers control requests without calling the model.
+  static override async listModels(_h: Harness, cwd: string): Promise<ModelList> {
+    const inbox = new AsyncQueue<SDKUserMessage>()
+    const q = query({ prompt: inbox, options: { cwd } })
+    try {
+      return { models: (await withTimeout(q.supportedModels(), 15000, 'Claude model list')).map(toModelInfo) }
+    } finally {
+      inbox.close()
+      q.close()
+    }
   }
 
   static async loadHistory(_h: Harness, nativeId: string): Promise<LogLine[]> {
