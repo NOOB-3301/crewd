@@ -5,6 +5,7 @@ import * as log from './log.ts'
 import { readMcp, writeMcp } from './mcp.ts'
 import * as registry from './registry.ts'
 import * as sessions from './sessions.ts'
+import * as usage from './usage.ts'
 import { HttpError } from './sessions.ts'
 import { AsyncQueue } from './util/async-queue.ts'
 
@@ -90,6 +91,11 @@ app.get('/sessions/:id/events', (c) => {
     })
     for await (const l of q) await stream.writeSSE({ id: String(l.seq), data: JSON.stringify(l) })
   })
+})
+
+app.get('/usage', async (c) => {
+  c.header('cache-control', 'no-store')
+  return c.json(await usage.all())
 })
 
 app.get('/mcp', (c) => c.json(readMcp()))

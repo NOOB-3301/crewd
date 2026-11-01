@@ -46,6 +46,7 @@ export function Home({ nav }: { nav: Nav }) {
     if (k.sequence === '?') return nav.help()
     if (k.name === 'n') return nav.push({ name: 'new' })
     if (k.name === 'm') return nav.push({ name: 'mcp' })
+    if (k.name === 'u') return nav.push({ name: 'usage' })
     const g = groups[cur]
     if (k.name === 'return' && g) return nav.push({ name: 'group', by: view, key: g.key, showTemp })
   })
@@ -70,7 +71,7 @@ export function Home({ nav }: { nav: Nav }) {
         {groups.length} {view === 'project' ? 'projects' : 'agents'} · {shown.length} sessions
         {hidden ? ` · ${hidden} in temp folders hidden (. to show)` : showTemp ? ' · showing temp folders (. to hide)' : ''} · MCP {on} on
       </text>
-      <KeyHints hints={[['enter', 'open'], ['←↑↓→', 'move'], ['tab', 'project/agent'], ['n', 'new'], ['m', 'mcp'],
+      <KeyHints hints={[['enter', 'open'], ['←↑↓→', 'move'], ['tab', 'project/agent'], ['n', 'new'], ['m', 'mcp'], ['u', 'usage'],
         ...(nav.openCount ? [['ctrl+o', 'open sessions'] as [string, string]] : []), ['?', 'keys'], ['q', 'quit']]} />
     </box>
   )

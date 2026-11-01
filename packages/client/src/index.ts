@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   routes, SOCKET_NAME,
-  type CreateSessionBody, type HarnessInfo, type ImageRef, type LogLine, type McpServer, type ModeId, type SessionMeta,
+  type CreateSessionBody, type HarnessInfo, type Usage, type ImageRef, type LogLine, type McpServer, type ModeId, type SessionMeta,
 } from '@crewd/protocol'
 
 export const crewdHome = process.env.CREWD_HOME ?? join(homedir(), '.crewd')
@@ -39,6 +39,8 @@ export const answerPermission = (id: string, requestId: string, optionId: string
 export const setMode = (id: string, mode: ModeId) => post<SessionMeta>(routes.mode(id), { mode })
 export const interrupt = (id: string) => post<unknown>(routes.interrupt(id))
 export const deleteSession = (id: string) => call<unknown>(routes.session(id), { method: 'DELETE' })
+/** Fresh account usage per agent; the daemon never caches it. */
+export const usage = () => call<Usage[]>(routes.usage, { cache: 'no-store' })
 export const getMcp = () => call<McpServer[]>(routes.mcp)
 export const putMcp = (list: McpServer[]) =>
   call<unknown>(routes.mcp, { method: 'PUT', body: JSON.stringify(list) })

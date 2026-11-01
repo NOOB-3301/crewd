@@ -6,6 +6,7 @@ export type Route =
   | { name: 'group'; by: 'project' | 'agent'; key: string; showTemp?: boolean }
   | { name: 'wall' }
   | { name: 'mcp' }
+  | { name: 'usage' }
 
 /** One open session in the wall. key stays the id it was opened with, so resuming a native session keeps the tile mounted. */
 export type Tile = { key: string; session: SessionMeta; harness: HarnessInfo }

@@ -7,6 +7,7 @@ const keys: [string, string][] = [
   ['enter', 'open a session (adds a tile), or expand a tool line'],
   ['n', 'new session (from the list)'],
   ['m', 'MCP servers (from the list)'],
+  ['u', 'account usage (from the list)'],
   ['q', 'quit (from the list)'],
   ['/', 'command palette; /permissions picks the mode'],
   ['esc', 'stop the turn; in a permission prompt, deny'],

@@ -11,6 +11,7 @@ import { Group } from './screens/Group.tsx'
 import { Help } from './screens/Help.tsx'
 import { Home } from './screens/Home.tsx'
 import { Mcp } from './screens/Mcp.tsx'
+import { Usage } from './screens/Usage.tsx'
 import { NewSession } from './screens/NewSession.tsx'
 import { Wall } from './screens/Wall.tsx'
 
@@ -90,6 +91,7 @@ export function App({ launchCwd }: { launchCwd: string }) {
         : r.name === 'new' ? <NewSession key={key} nav={nav} harness={r.harness} cwd={r.cwd} />
         : r.name === 'group' ? <Group key={key} nav={nav} by={r.by} groupKey={r.key} showTemp={r.showTemp} />
         : r.name === 'mcp' ? <Mcp key={key} nav={nav} />
+        : r.name === 'usage' ? <Usage key={key} nav={nav} />
         : !onWall ? <Home key={key} nav={nav} />
         : null}
     </box>

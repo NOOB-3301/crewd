@@ -72,6 +72,32 @@ export type LogLine = { seq: number; ts: number } & ({ kind: 'user'; text: strin
 
 export type McpServer = { name: string; command: string; args?: string[]; env?: Record<string, string>; enabled?: boolean }
 
+/** One number a provider reports. Any of used/remaining/total/percent may be missing: providers expose different things. */
+export type UsageMeter = {
+  label: string
+  unit: 'percent' | 'credits' | 'tokens' | 'usd' | 'count'
+  used?: number
+  remaining?: number
+  total?: number
+  percent?: number
+  resetsAt?: string
+}
+
+/**
+ * GET /usage returns one of these per harness, fetched fresh each call.
+ * source: 'account' = the provider's own quota, 'local' = totals counted on this machine, 'none' = nothing available.
+ */
+export type Usage = {
+  harness: string
+  label: string
+  source: 'account' | 'local' | 'none'
+  plan?: string
+  message?: string
+  meters: UsageMeter[]
+  breakdown?: { label: string; percent: number }[]
+  error?: string
+}
+
 export type HarnessInfo = Harness & { installed: boolean; caps: Caps; count: number }
 
 // Request bodies
@@ -96,4 +122,5 @@ export const routes = {
   permission: (id: string, requestId: string) => `/sessions/${encodeURIComponent(id)}/permissions/${encodeURIComponent(requestId)}`,
   mode: (id: string) => `/sessions/${encodeURIComponent(id)}/mode`,
   mcp: '/mcp',
+  usage: '/usage',
 } as const
