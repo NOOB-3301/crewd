@@ -5,8 +5,10 @@ export type PalItem = Cmd & { crewd?: boolean }
 
 export const crewdCommands: PalItem[] = [
   { name: 'new', description: 'start a new session', crewd: true },
-  { name: 'sessions', description: 'list sessions', crewd: true },
+  { name: 'sessions', description: 'back to the session list', crewd: true },
   { name: 'stop', description: 'stop the current turn', crewd: true },
+  { name: 'permissions', description: 'pick the permission mode (incl. bypassPermissions)', crewd: true },
+  { name: 'mode', description: 'same as /permissions', crewd: true },
 ]
 
 /** Commands matching what was typed after `/`: prefix matches first, then substring; crewd's own win name clashes. */

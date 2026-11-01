@@ -6,6 +6,7 @@ export const theme = {
   muted: '#8A8F98',
   danger: '#FF6B6B',
   ok: '#8BD17C',
+  warn: '#FFD75F',
 }
 
 const accents: Record<string, string> = {

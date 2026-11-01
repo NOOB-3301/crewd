@@ -41,6 +41,7 @@ app.get('/harnesses/:id/sessions', async (c) =>
 )
 
 app.post('/sessions', async (c) => c.json(await sessions.create(await body(c)), 201))
+app.get('/sessions', (c) => c.json(sessions.listOurs()))
 
 app.get('/sessions/:id/history', async (c) => {
   const id = c.req.param('id')
@@ -58,10 +59,17 @@ app.get('/sessions/:id/history', async (c) => {
 })
 
 app.post('/sessions/:id/messages', async (c) => {
-  const { text } = await body(c)
-  if (typeof text !== 'string' || !text.trim()) throw new HttpError(400, 'text is required')
-  return c.json(await sessions.send(c.req.param('id'), text))
+  const { text, images } = await body(c)
+  if (typeof text !== 'string' || (!text.trim() && !images?.length)) throw new HttpError(400, 'text is required')
+  return c.json(await sessions.send(c.req.param('id'), text, images))
 })
+
+app.post('/sessions/:id/permissions/:requestId', async (c) => {
+  const { optionId } = await body(c)
+  return c.json(sessions.answer(c.req.param('id'), c.req.param('requestId'), optionId))
+})
+
+app.post('/sessions/:id/mode', async (c) => c.json(await sessions.setMode(c.req.param('id'), (await body(c)).mode)))
 
 app.post('/sessions/:id/interrupt', async (c) => c.json(await sessions.interrupt(c.req.param('id'))))
 

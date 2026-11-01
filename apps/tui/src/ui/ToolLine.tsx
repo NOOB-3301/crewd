@@ -7,7 +7,7 @@ export type ToolItem = {
 
 const argKeys = ['file_path', 'path', 'command', 'pattern', 'url', 'query', 'description', 'prompt']
 
-function mainArg(input: unknown): string {
+export function mainArg(input: unknown): string {
   if (typeof input === 'string') return input
   if (!input || typeof input !== 'object') return ''
   const o = input as Record<string, unknown>

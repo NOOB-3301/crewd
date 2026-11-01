@@ -1,11 +1,11 @@
-import type { Ev, Harness, LogLine, SessionMeta } from '@crewd/protocol'
-import { SdkOrchestrator } from '../sdk.ts'
+import type { Ev, Harness, LogLine, ModeId, SessionMeta } from '@crewd/protocol'
+import { SdkOrchestrator, type UserContent } from '../sdk.ts'
 import { claudeMessageToEv } from './claude.ts'
 
 // Qoder Agent SDK mirrors Claude's: https://docs.qoder.com/cli/sdk/references-typescript.md
 // Optional dependency, so only the parts crewd touches are typed here.
-type UserMessage = { type: 'user'; message: { role: 'user'; content: { type: 'text'; text: string }[] }; parent_tool_use_id: null }
-type Query = AsyncGenerator<unknown, void> & { interrupt(): Promise<unknown> }
+type UserMessage = { type: 'user'; message: { role: 'user'; content: Exclude<UserContent, string> }; parent_tool_use_id: null }
+type Query = AsyncGenerator<unknown, void> & { interrupt(): Promise<unknown>; setPermissionMode(mode: string): Promise<void> }
 type SessionInfo = { sessionId: string; summary: string; lastModified: number; customTitle?: string; firstPrompt?: string; cwd?: string; createdAt?: number }
 type SessionMessage = { type: 'user' | 'assistant' | 'system'; message: unknown }
 type QoderSdk = {
@@ -41,8 +41,8 @@ export class QoderSdkOrchestrator extends SdkOrchestrator {
     const sdk = await loadSdk()
     const inbox = this.inbox
     async function* prompt(): AsyncIterable<UserMessage> {
-      for await (const text of inbox)
-        yield { type: 'user', message: { role: 'user', content: [{ type: 'text', text }] }, parent_tool_use_id: null }
+      for await (const c of inbox)
+        yield { type: 'user', message: { role: 'user', content: typeof c === 'string' ? [{ type: 'text', text: c }] : c }, parent_tool_use_id: null }
     }
     this.q = sdk.query({
       prompt: prompt(),
@@ -53,8 +53,11 @@ export class QoderSdkOrchestrator extends SdkOrchestrator {
         mcpServers: Object.fromEntries(
           this.mcp.filter((s) => s.enabled !== false).map((s) => [s.name, { type: 'stdio', command: s.command, args: s.args, env: s.env }]),
         ),
-        // No approval UI yet, same policy as the Claude orchestrator.
-        permissionMode: process.env.CREWD_QODER_PERMISSION_MODE ?? 'acceptEdits',
+        // shortcut: written from the docs, not run (SDK not installed): assumes Claude's permissionMode values,
+        // canUseTool signature and setPermissionMode; check against a real install.
+        permissionMode: this.mode,
+        canUseTool: (tool: string, input: Record<string, unknown>, opts: { signal: AbortSignal; suggestions?: unknown[] }) =>
+          this.canUseTool(tool, input, opts),
       },
     })
     yield* this.q
@@ -62,6 +65,12 @@ export class QoderSdkOrchestrator extends SdkOrchestrator {
 
   async interrupt() {
     await this.q?.interrupt()
+  }
+
+  async setMode(mode: ModeId) {
+    if (!this.q) throw new Error('Qoder session not started')
+    await this.q.setPermissionMode(mode)
+    this.emitMode(mode)
   }
 
   // Ending the input lets an idle CLI exit; stop the generator if a turn keeps it busy.

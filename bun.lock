@@ -4,6 +4,9 @@
   "workspaces": {
     "": {
       "name": "crewd",
+      "dependencies": {
+        "@qoder-ai/qoder-agent-sdk": "^1.0.58",
+      },
       "devDependencies": {
         "typescript": "^7.0.2",
       },
@@ -14,6 +17,7 @@
         "crewd": "./dist/main.js",
       },
       "dependencies": {
+        "@agentclientprotocol/sdk": "2.2.0",
         "@anthropic-ai/claude-agent-sdk": "^0.3.316",
         "@crewd/protocol": "workspace:*",
         "@hono/node-server": "^2.1.5",
@@ -51,6 +55,8 @@
     },
   },
   "packages": {
+    "@agentclientprotocol/sdk": ["@agentclientprotocol/sdk@2.2.0", "", { "peerDependencies": { "@modelcontextprotocol/server": "^2.4.0", "zod": "^3.25.76 || ^4.0.0" }, "optionalPeers": ["@modelcontextprotocol/server"] }, "sha512-o1+eDQVb05yzPY+5v54awHyONU1oeLsbLVavkwrMQaZDuJDh/38pQiXJS4ix4d6QA3Y4bU0lHFRjwg99KKKSaQ=="],
+
     "@anthropic-ai/claude-agent-sdk": ["@anthropic-ai/claude-agent-sdk@0.3.316", "", { "optionalDependencies": { "@anthropic-ai/claude-agent-sdk-darwin-arm64": "0.3.316", "@anthropic-ai/claude-agent-sdk-darwin-x64": "0.3.316", "@anthropic-ai/claude-agent-sdk-linux-arm64": "0.3.316", "@anthropic-ai/claude-agent-sdk-linux-arm64-musl": "0.3.316", "@anthropic-ai/claude-agent-sdk-linux-x64": "0.3.316", "@anthropic-ai/claude-agent-sdk-linux-x64-musl": "0.3.316", "@anthropic-ai/claude-agent-sdk-win32-arm64": "0.3.316", "@anthropic-ai/claude-agent-sdk-win32-x64": "0.3.316" }, "peerDependencies": { "@anthropic-ai/sdk": ">=0.93.0", "@modelcontextprotocol/sdk": "^1.29.0", "zod": "^4.0.0" } }, "sha512-mCMr0que5kIy80JslJub6WFDB2+GYRGWNeVgSZaBpkBwXrr4wnRMnnGHitkA2BEJ5QP5xWyc6YH/6do/edxCWg=="],
 
     "@anthropic-ai/claude-agent-sdk-darwin-arm64": ["@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.316", "", { "os": "darwin", "cpu": "arm64" }, "sha512-1I1oJ/YGqq4pFQvJqycD2e8pbsUQLLR+DwEzG9jQAGCoSKkxP1TBfHpjSik/0byCixyzpYObrYXPC0PKBIR91g=="],
@@ -106,6 +112,8 @@
     "@opentui/core-win32-x64": ["@opentui/core-win32-x64@0.8.1", "", { "os": "win32", "cpu": "x64" }, "sha512-+rIrkvwBJMGWdXn4GGQAmM4y+RH1Xvb9nveNyJ58SOsTOBqyWyi+63qMlxe58WVl+sVAJodEjAILcWdwrzMJ3Q=="],
 
     "@opentui/react": ["@opentui/react@0.8.1", "", { "dependencies": { "@opentui/core": "0.8.1", "react-reconciler": "^0.33.0" }, "peerDependencies": { "react": ">=19.2.0", "react-devtools-core": "^7.0.1", "ws": "^8.18.0" } }, "sha512-2Suc127MY7iLkgzFjyKJVsML4PZHhtc+lOXgQhP4bP6zxgNCBlGm/FxX0fDbp5RpuogKyIix9s57YnpxQB54nw=="],
+
+    "@qoder-ai/qoder-agent-sdk": ["@qoder-ai/qoder-agent-sdk@1.0.58", "", { "dependencies": { "@modelcontextprotocol/sdk": "^1.27.1" }, "peerDependencies": { "zod": "^3.25.0 || ^4.0.0" }, "hasInstallScript": true }, "sha512-h726yBIXm08GQ9mZ9cLXJJWdVCiCt/ys6JlcJ2Ij7ipQZDS8yrQl0LxEGGJBv9k586oD9VjQMnbuUmK9HNnNVA=="],
 
     "@stablelib/base64": ["@stablelib/base64@1.0.1", "", {}, "sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ=="],
 

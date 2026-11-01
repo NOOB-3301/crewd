@@ -1,8 +1,24 @@
-import type { Caps, Ev, Harness, LogLine, McpServer, SessionMeta } from '@crewd/protocol'
+import type { Caps, Ev, Harness, LogLine, McpServer, ModeId, PermissionOption, SessionMeta } from '@crewd/protocol'
+
+/** A permission question as the orchestrator asks it; sessions.ts adds the requestId and relays it. */
+export type PermissionAsk = { tool: string; title?: string; input?: unknown; options: PermissionOption[] }
+/** Image file already read by the daemon. */
+export type Image = { mime: string; data: string }
+
+// The one detail a person needs to judge a tool call: the command, path or URL.
+export function summary(input: unknown): string | undefined {
+  const i = (input ?? {}) as Record<string, unknown>
+  const v = i.command ?? i.file_path ?? i.filePath ?? i.notebook_path ?? i.url ?? i.path ?? i.pattern ?? i.query
+  return typeof v === 'string' ? v.slice(0, 200) : undefined
+}
 
 // One instance per running session. sessionId undefined = new session, set = resume.
 export abstract class Orchestrator {
   nativeId?: string
+  /** Mode to start in (create body or the session's last mode); harness default when undefined. */
+  startMode?: ModeId
+  /** Set by sessions.ts. Resolves with the chosen option id, or undefined when cancelled (interrupt, delete, agent abort). */
+  askUser: (req: PermissionAsk, signal?: AbortSignal) => Promise<string | undefined> = async () => undefined
 
   constructor(
     readonly harness: Harness,
@@ -14,8 +30,9 @@ export abstract class Orchestrator {
   }
 
   abstract start(): Promise<void>
-  abstract send(text: string): Promise<void>
+  abstract send(text: string, images?: Image[]): Promise<void>
   abstract interrupt(): Promise<void>
+  abstract setMode(mode: ModeId): Promise<void>
   abstract close(): Promise<void>
   abstract events(): AsyncIterable<Ev>
   abstract caps(): Caps

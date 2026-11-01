@@ -3,10 +3,11 @@ import {
   listSessions,
   query,
   type PermissionMode,
+  type PermissionUpdate,
   type Query,
   type SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk'
-import type { Cmd, Ev, Harness, LogLine, SessionMeta } from '@crewd/protocol'
+import type { Cmd, Ev, Harness, LogLine, ModeId, SessionMeta } from '@crewd/protocol'
 import { SdkOrchestrator } from '../sdk.ts'
 
 const str = (v: unknown): v is string => typeof v === 'string'
@@ -62,7 +63,8 @@ export class ClaudeSdkOrchestrator extends SdkOrchestrator {
   protected runQuery() {
     const inbox = this.inbox
     async function* prompt(): AsyncIterable<SDKUserMessage> {
-      for await (const text of inbox) yield { type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null }
+      for await (const content of inbox)
+        yield { type: 'user', message: { role: 'user', content: content as SDKUserMessage['message']['content'] }, parent_tool_use_id: null }
     }
     this.q = query({
       prompt: prompt(),
@@ -70,8 +72,12 @@ export class ClaudeSdkOrchestrator extends SdkOrchestrator {
         cwd: this.cwd,
         resume: this.sessionId,
         mcpServers: Object.fromEntries(this.mcp.map((s) => [s.name, { command: s.command, args: s.args, env: s.env }])),
-        // No approval UI yet: anything the mode doesn't auto-allow is denied.
-        permissionMode: (process.env.CREWD_CLAUDE_PERMISSION_MODE ?? 'acceptEdits') as PermissionMode,
+        permissionMode: this.mode as PermissionMode,
+        allowDangerouslySkipPermissions: true, // lets setMode reach bypassPermissions; the TUI confirms it
+        canUseTool: async (tool, input, opts) => {
+          const r = await this.canUseTool(tool, input, opts)
+          return r.behavior === 'allow' ? { ...r, updatedPermissions: r.updatedPermissions as PermissionUpdate[] | undefined } : r
+        },
       },
     })
     // The list with descriptions is ready before the first message; init only brings bare names later.
@@ -81,6 +87,12 @@ export class ClaudeSdkOrchestrator extends SdkOrchestrator {
 
   async interrupt() {
     await this.q?.interrupt()
+  }
+
+  async setMode(mode: ModeId) {
+    if (!this.q) throw new Error('Claude session not started')
+    await this.q.setPermissionMode(mode as PermissionMode)
+    this.emitMode(mode)
   }
 
   // Ending the input stream lets an idle CLI exit cleanly; force-kill if a turn keeps it busy.

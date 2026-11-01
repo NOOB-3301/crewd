@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import { statSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
-import type { CreateSessionBody, Harness, LogLine, SessionMeta, SessionStatus } from '@crewd/protocol'
+import type { CreateSessionBody, Harness, ImageRef, LogLine, ModeId, SessionMeta, SessionStatus } from '@crewd/protocol'
 import * as log from './log.ts'
 import { mcpFor } from './mcp.ts'
-import type { Orchestrator } from './orchestrators/orchestrator.ts'
+import type { Image, Orchestrator, PermissionAsk } from './orchestrators/orchestrator.ts'
 import * as registry from './registry.ts'
 
 const IDLE_MS = 15 * 60_000
@@ -25,6 +25,8 @@ type Entry = {
   ready?: Promise<void>
   subs: Set<(l: LogLine) => void>
   timer?: NodeJS.Timeout
+  /** open permission requests: requestId -> option ids + settle(optionId | undefined = cancelled) */
+  pending: Map<string, { options: string[]; settle: (optionId?: string) => void }>
 }
 const live = new Map<string, Entry>()
 
@@ -33,7 +35,7 @@ function entry(id: string): Entry {
   if (!e) {
     const meta = log.readMeta(id)
     if (!meta) throw new HttpError(404, `no session ${id}`)
-    e = { meta, subs: new Set() }
+    e = { meta, subs: new Set(), pending: new Map() }
     live.set(id, e)
   }
   return e
@@ -47,6 +49,9 @@ function emit(e: Entry, body: log.Entry) {
   for (const fn of e.subs) fn(line)
   resetIdle(e)
 }
+
+/** a turn is in progress (possibly blocked on the user) */
+const busy = (s: SessionStatus) => s === 'running' || s === 'waiting'
 
 function setStatus(e: Entry, state: SessionStatus) {
   if (e.meta.status === state) return
@@ -62,10 +67,32 @@ function resetIdle(e: Entry) {
   e.timer.unref()
 }
 
+// The request is logged, so a client that connects later replays it from history.
+function ask(e: Entry, req: PermissionAsk, signal?: AbortSignal): Promise<string | undefined> {
+  const requestId = randomUUID()
+  return new Promise((resolve) => {
+    const settle = (optionId?: string) => {
+      if (!e.pending.delete(requestId)) return
+      emit(e, { kind: 'event', ev: { type: 'permission_resolved', requestId, ...(optionId && { optionId }) } })
+      if (!e.pending.size && e.meta.status === 'waiting') setStatus(e, 'running')
+      resolve(optionId)
+    }
+    e.pending.set(requestId, { options: req.options.map((o) => o.id), settle })
+    signal?.addEventListener('abort', () => settle(), { once: true })
+    emit(e, { kind: 'event', ev: { type: 'permission_request', requestId, ...req } })
+    if (e.meta.status !== 'dead') setStatus(e, 'waiting')
+  })
+}
+
+const cancelPending = (e: Entry) => {
+  for (const p of [...e.pending.values()]) p.settle()
+}
+
 // Close the orchestrator but keep the session; the next message resumes via nativeId.
 async function stop(e: Entry) {
   const o = e.orch
   clearTimeout(e.timer)
+  cancelPending(e)
   if (!o) return
   e.orch = e.ready = undefined
   await o.close().catch((err) => log.daemonLog('close failed', e.meta.id, err))
@@ -73,6 +100,8 @@ async function stop(e: Entry) {
 
 function startOrch(e: Entry, h: Harness) {
   const o = registry.create(h, e.meta.cwd, e.meta.nativeId, mcpFor(e.meta.mcp))
+  o.startMode = e.meta.permissionMode
+  o.askUser = (req, signal) => ask(e, req, signal)
   e.orch = o
   // ready never rejects: a failed start is shown in the chat, not as an HTTP error.
   e.ready = o.start().then(
@@ -80,7 +109,7 @@ function startOrch(e: Entry, h: Harness) {
     (err) => {
       if (e.orch === o) e.orch = e.ready = undefined
       emit(e, { kind: 'event', ev: { type: 'error', message: String(err?.message ?? err) } })
-      if (e.meta.status === 'running') setStatus(e, 'idle')
+      if (busy(e.meta.status)) setStatus(e, 'idle')
     },
   )
   resetIdle(e)
@@ -95,17 +124,25 @@ async function pump(e: Entry, o: Orchestrator) {
       }
       // Orchestrators only end turns; interrupted/dead are set by crewd and stay put.
       if (ev.type === 'status') {
-        if (e.meta.status === 'running') setStatus(e, ev.state)
+        if (busy(e.meta.status)) setStatus(e, ev.state)
         continue
       }
+      if (ev.type === 'mode' && ev.mode !== e.meta.permissionMode) {
+        e.meta.permissionMode = ev.mode
+        log.writeMeta(e.meta)
+      }
       emit(e, { kind: 'event', ev })
-      if (ev.type === 'turn_end' && e.meta.status === 'running') setStatus(e, 'idle')
+      if (ev.type === 'turn_end' && busy(e.meta.status)) {
+        setStatus(e, 'idle')
+        cancelPending(e)
+      }
     }
   } catch (err) {
     emit(e, { kind: 'event', ev: { type: 'error', message: String((err as Error)?.message ?? err) } })
   }
   if (e.orch === o) e.orch = e.ready = undefined
-  if (e.meta.status === 'running') setStatus(e, 'idle')
+  if (busy(e.meta.status)) setStatus(e, 'idle')
+  cancelPending(e)
 }
 
 export async function create(body: CreateSessionBody): Promise<SessionMeta> {
@@ -117,6 +154,7 @@ export async function create(body: CreateSessionBody): Promise<SessionMeta> {
   if (body.resumeId !== undefined && !str(body.resumeId)) throw new HttpError(400, 'resumeId must be a string')
   if (body.mcp !== undefined && !(Array.isArray(body.mcp) && body.mcp.every(str)))
     throw new HttpError(400, 'mcp must be an array of names')
+  if (body.permissionMode !== undefined && !str(body.permissionMode)) throw new HttpError(400, 'permissionMode must be a string')
 
   const now = Date.now()
   const meta: SessionMeta = {
@@ -129,8 +167,9 @@ export async function create(body: CreateSessionBody): Promise<SessionMeta> {
     updatedAt: now,
     source: 'crewd',
     mcp: body.mcp,
+    permissionMode: body.permissionMode,
   }
-  const e: Entry = { meta, subs: new Set() }
+  const e: Entry = { meta, subs: new Set(), pending: new Map() }
   live.set(meta.id, e)
   log.writeMeta(meta)
 
@@ -149,11 +188,26 @@ export async function create(body: CreateSessionBody): Promise<SessionMeta> {
   return meta
 }
 
-export async function send(id: string, text: string): Promise<SessionMeta> {
+function readImages(images: unknown): Image[] {
+  if (images === undefined) return []
+  if (!Array.isArray(images)) throw new HttpError(400, 'images must be an array')
+  return images.map((i: ImageRef) => {
+    if (!str(i?.path) || !str(i?.mime) || !i.mime.startsWith('image/'))
+      throw new HttpError(400, 'each image needs a path and an image/* mime')
+    try {
+      return { mime: i.mime, data: readFileSync(i.path).toString('base64') }
+    } catch (err) {
+      throw new HttpError(400, `cannot read image ${i.path}: ${(err as Error).message}`)
+    }
+  })
+}
+
+export async function send(id: string, text: string, imageRefs?: unknown): Promise<SessionMeta> {
   const e = entry(id)
   if (e.meta.status === 'dead') throw new HttpError(409, 'session is closed')
   const h = registry.get(e.meta.harness)
   if (!h) throw new HttpError(400, `unknown harness ${e.meta.harness}`)
+  const images = readImages(imageRefs)
 
   emit(e, { kind: 'user', text })
   e.meta.title ??= text.slice(0, TITLE_MAX)
@@ -164,7 +218,7 @@ export async function send(id: string, text: string): Promise<SessionMeta> {
   const o = e.orch!
   await e.ready
   if (e.orch === o) {
-    await o.send(text).catch((err) => {
+    await o.send(text, images).catch((err) => {
       emit(e, { kind: 'event', ev: { type: 'error', message: String(err?.message ?? err) } })
       setStatus(e, 'idle')
     })
@@ -174,10 +228,43 @@ export async function send(id: string, text: string): Promise<SessionMeta> {
 
 export async function interrupt(id: string): Promise<SessionMeta> {
   const e = entry(id)
+  // idle first, so answering the open prompts as cancelled doesn't flip the status back to running
+  if (busy(e.meta.status)) setStatus(e, 'idle')
+  cancelPending(e)
   await e.orch?.interrupt()
-  if (e.meta.status === 'running') setStatus(e, 'idle')
   return e.meta
 }
+
+export function answer(id: string, requestId: string, optionId: unknown): SessionMeta {
+  const e = entry(id)
+  const p = e.pending.get(requestId)
+  if (!p) throw new HttpError(404, `no open permission request ${requestId}`)
+  if (!str(optionId) || !p.options.includes(optionId)) throw new HttpError(400, `optionId must be one of ${p.options.join(', ')}`)
+  p.settle(optionId)
+  return e.meta
+}
+
+export async function setMode(id: string, mode: unknown): Promise<SessionMeta> {
+  const e = entry(id)
+  if (!str(mode) || !mode) throw new HttpError(400, 'mode is required')
+  if (e.meta.status === 'dead') throw new HttpError(409, 'session is closed')
+  const h = registry.get(e.meta.harness)
+  if (!h) throw new HttpError(400, `unknown harness ${e.meta.harness}`)
+  if (!e.orch) startOrch(e, h)
+  await e.ready
+  if (!e.orch) throw new HttpError(409, 'session failed to start')
+  await e.orch.setMode(mode as ModeId).catch((err) => {
+    throw new HttpError(400, String(err?.message ?? err))
+  })
+  return e.meta
+}
+
+/** crewd's own sessions, running and past, newest first. */
+export const listOurs = (): SessionMeta[] =>
+  log
+    .listMetas()
+    .map((m) => live.get(m.id)?.meta ?? m)
+    .sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt))
 
 export async function remove(id: string): Promise<SessionMeta> {
   const e = entry(id)
@@ -210,15 +297,26 @@ export async function listForHarness(h: Harness, cwd?: string): Promise<SessionM
   )
 }
 
-/** Daemon start: a session that was mid-turn when the daemon died can't still be running. */
+/** Daemon start: a session that was mid-turn when the daemon died can't still be running, nor its prompts open. */
 export function recover() {
-  for (const m of log.listMetas()) if (m.status === 'running') setStatus(entry(m.id), 'interrupted')
+  for (const m of log.listMetas()) {
+    if (!busy(m.status)) continue
+    const e = entry(m.id)
+    const open = new Set<string>()
+    for (const l of log.read(m.id)) {
+      if (l.kind !== 'event') continue
+      if (l.ev.type === 'permission_request') open.add(l.ev.requestId)
+      if (l.ev.type === 'permission_resolved') open.delete(l.ev.requestId)
+    }
+    for (const requestId of open) emit(e, { kind: 'event', ev: { type: 'permission_resolved', requestId } })
+    setStatus(e, 'interrupted')
+  }
 }
 
 export async function closeAll() {
   await Promise.all(
     [...live.values()].map((e) => {
-      if (e.meta.status === 'running') setStatus(e, 'interrupted')
+      if (busy(e.meta.status)) setStatus(e, 'interrupted')
       return stop(e)
     }),
   )

@@ -11,5 +11,8 @@
   },
   "devDependencies": {
     "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@qoder-ai/qoder-agent-sdk": "^1.0.58"
   }
 }
