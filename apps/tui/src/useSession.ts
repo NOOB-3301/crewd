@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Cmd, Ev, HarnessInfo, ImageRef, LogLine, ModeId, ModeInfo, SessionMeta, SessionStatus } from '@crewd/protocol'
+import type { Cmd, Ev, HarnessInfo, ImageRef, LogLine, ModeId, ModeInfo, ModelInfo, SessionMeta, SessionStatus } from '@crewd/protocol'
 import * as client from '@crewd/client'
 import type { ToolItem } from './ui/ToolLine.tsx'
 import { readPref } from './prefs.ts'
@@ -84,6 +84,7 @@ export function useSession(initial: SessionMeta, harness: HarnessInfo, onLive?: 
   const derived = useMemo(() => {
     let status: SessionStatus = session.status, tokens = 0, cost = 0, commands: Cmd[] = []
     let mode = session.permissionMode, modes: ModeInfo[] = []
+    let model = session.model, models: ModelInfo[] = []
     const asks = new Map<string, Pending>()
     for (const l of lines) {
       if (l.kind !== 'event') continue
@@ -91,6 +92,7 @@ export function useSession(initial: SessionMeta, harness: HarnessInfo, onLive?: 
       if (ev.type === 'status') status = ev.state
       else if (ev.type === 'commands') commands = ev.list
       else if (ev.type === 'mode') { mode = ev.mode; modes = ev.available }
+      else if (ev.type === 'model') { model = ev.model ?? model; models = ev.available }
       else if (ev.type === 'permission_request') asks.set(ev.requestId, ev)
       else if (ev.type === 'permission_resolved') asks.delete(ev.requestId)
       // costUsd is the SDK's running total for the session, so keep the latest instead of summing
@@ -98,8 +100,8 @@ export function useSession(initial: SessionMeta, harness: HarnessInfo, onLive?: 
     }
     if (!modes.length && harness.id === 'claude') modes = claudeModes
     const pending = [...asks.values()].find((a) => !answered.has(a.requestId))
-    return { status, tokens, cost, commands, mode, modes, pending }
-  }, [lines, session.status, session.permissionMode, answered])
+    return { status, tokens, cost, commands, mode, modes, model, models, pending }
+  }, [lines, session.status, session.permissionMode, session.model, answered])
 
   // A session found in the harness's own store has no live process; resuming it gives us one (and its commands).
   const live = useRef<Promise<SessionMeta> | null>(null)
@@ -151,6 +153,14 @@ export function useSession(initial: SessionMeta, harness: HarnessInfo, onLive?: 
     } catch (e: any) { setErr(`Could not switch to ${mode}: ${e.message}`) }
   }
 
+  async function setModel(model: string) {
+    try {
+      const s = await goLive()
+      await client.setModel(s.id, model)
+      setErr('')
+    } catch (e: any) { setErr(`Could not switch to ${model}: ${e.message}`) }
+  }
+
   /** Next mode in the session's list, skipping bypassPermissions (only reachable through /permissions). */
   function cycleMode() {
     const list = derived.modes.filter((m) => m.id !== 'bypassPermissions')
@@ -159,7 +169,7 @@ export function useSession(initial: SessionMeta, harness: HarnessInfo, onLive?: 
     return setMode(list[(i + 1) % list.length]!.id)
   }
 
-  return { session, harness, blocks, ...derived, err, setErr, goLive, send, stop, answer, setMode, cycleMode }
+  return { session, harness, blocks, ...derived, err, setErr, goLive, send, stop, answer, setMode, setModel, cycleMode }
 }
 
 export type SessionState = ReturnType<typeof useSession>

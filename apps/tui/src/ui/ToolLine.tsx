@@ -18,7 +18,7 @@ export function mainArg(input: unknown): string {
 const show = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v, null, 2) ?? '')
 const clip = (s: string, n = 20) => {
   const lines = s.split('\n')
-  return lines.length > n ? [...lines.slice(0, n), `… ${lines.length - n} more lines`].join('\n') : s
+  return lines.length > n ? [...lines.slice(0, n), `… ${lines.length - n} more lines (enter again for all)`].join('\n') : s
 }
 
 type Change = { old: string; new: string }
@@ -43,25 +43,25 @@ export function changes(input: unknown): Change[] | undefined {
   return w !== undefined && str(o.file_path) ? [{ old: '', new: w }] : undefined
 }
 
-function Diff({ cs }: { cs: Change[] }) {
+function Diff({ cs, max }: { cs: Change[]; max: number }) {
   const rows = cs.flatMap((c, i) => [
     ...(i ? [{ t: ' ', text: '⋯' }] : []),
     ...(c.old ? c.old.split('\n').map((text) => ({ t: '-', text })) : []),
     ...c.new.split('\n').map((text) => ({ t: '+', text })),
   ])
-  const max = 40
   const shown = rows.slice(0, max)
   return (
     <box flexDirection="column">
       {shown.map((r, i) => (
         <text key={i} fg={r.t === '-' ? theme.danger : r.t === '+' ? theme.ok : theme.muted}>{r.t} {r.text}</text>
       ))}
-      {rows.length > max && <text fg={theme.muted}>… {rows.length - max} more lines</text>}
+      {rows.length > max && <text fg={theme.muted}>… {rows.length - max} more lines (enter again for all)</text>}
     </box>
   )
 }
 
-export function ToolLine({ t, open, selected, width }: { t: ToolItem; open: boolean; selected: boolean; width: number }) {
+export function ToolLine({ t, open, full, selected, width }: { t: ToolItem; open: boolean; full?: boolean; selected: boolean; width: number }) {
+  const cut = (v: unknown) => (full ? show(v) : clip(show(v)))
   const mark = t.status === 'start' ? '…' : t.status === 'error' ? '✗' : '✓'
   const markColor = t.status === 'start' ? theme.muted : t.status === 'error' ? theme.danger : theme.ok
   const dur = t.endTs ? `${((t.endTs - t.startTs) / 1000).toFixed(1)}s` : ''
@@ -78,8 +78,8 @@ export function ToolLine({ t, open, selected, width }: { t: ToolItem; open: bool
       </text>
       {open && (
         <box flexDirection="column" paddingLeft={2}>
-          {diff ? <Diff cs={diff} /> : <text fg={theme.muted}>{clip(show(t.input))}</text>}
-          {t.output !== undefined && <text fg={t.status === 'error' ? theme.danger : undefined}>{clip(show(t.output))}</text>}
+          {diff ? <Diff cs={diff} max={full ? Infinity : 40} /> : <text fg={theme.muted}>{cut(t.input)}</text>}
+          {t.output !== undefined && <text fg={t.status === 'error' ? theme.danger : undefined}>{cut(t.output)}</text>}
         </box>
       )}
     </box>

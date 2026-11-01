@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { resolve } from 'node:path'
 import { useKeyboard, useTerminalDimensions } from '@opentui/react'
-import type { HarnessInfo } from '@crewd/protocol'
+import type { HarnessInfo, ModelList } from '@crewd/protocol'
 import * as client from '@crewd/client'
 import type { Nav } from '../nav.ts'
 import { groupSessions, isTemp, useAllSessions } from '../allSessions.ts'
@@ -11,6 +11,8 @@ import { readPref, writePref } from '../prefs.ts'
 import { claudeModes, defaultMode } from '../useSession.ts'
 import { KeyHints } from '../ui/KeyHints.tsx'
 import { accent, age, pad, shortPath, theme } from '../ui/theme.ts'
+
+type Prefs = { defaultMode?: string; models?: Record<string, string> }
 
 const expand = (p: string) => resolve(p.trim().replace(/^~(?=\/|$)/, homedir()))
 const looksLikePath = (p: string) => /^[~/.]/.test(p.trim())
@@ -26,6 +28,9 @@ export function NewSession({ nav, harness, cwd: givenCwd }: { nav: Nav; harness?
   const [mode, setMode] = useState(defaultMode)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  // Model lists per harness + folder (the daemon probes the agent, which takes a few seconds); picks per harness, -1 = agent default.
+  const [modelLists, setModelLists] = useState<Record<string, ModelList | undefined>>({})
+  const [modelSel, setModelSel] = useState<Record<string, number>>({})
 
   // Folder step: known projects (newest first, temp folders left out), filtered by what's typed.
   const projects = groupSessions(sessions.filter((s) => !isTemp(s.cwd)), 'project', byId)
@@ -43,12 +48,29 @@ export function NewSession({ nav, harness, cwd: givenCwd }: { nav: Nav; harness?
   const picked = harness ?? agents[Math.min(agentSel, agents.length - 1)]
   const hasMode = picked?.id === 'claude'
 
+  const listKey = picked && cwd ? `${picked.id}\0${cwd}` : ''
+  const modelList = modelLists[listKey]
+  const models = modelList?.models ?? []
+  const savedModel = picked ? readPref<Prefs>('tui.json', {}).models?.[picked.id] : undefined
+  const msel = picked ? (modelSel[picked.id] ?? models.findIndex((m) => m.id === savedModel)) : -1
+  const pickedModel = msel >= 0 ? models[msel] : undefined
+  useEffect(() => {
+    if (!listKey || modelLists[listKey]) return
+    const done = (l: ModelList) => setModelLists((m) => ({ ...m, [listKey]: l }))
+    client.harnessModels(picked!.id, cwd).then(done, (e) => done({ models: [], error: e.message }))
+  }, [listKey])
+
   async function start(h: HarnessInfo) {
     if (!cwd || busy) return
     setBusy(true)
     try {
-      const session = await client.createSession({ harness: h.id, cwd, permissionMode: h.id === 'claude' ? mode : undefined })
-      if (h.id === 'claude') writePref('tui.json', { ...readPref('tui.json', {}), defaultMode: mode })
+      const model = h === picked ? pickedModel?.id : undefined
+      const session = await client.createSession({ harness: h.id, cwd, permissionMode: h.id === 'claude' ? mode : undefined, model })
+      const prefs = readPref<Prefs>('tui.json', {})
+      if (h.id === 'claude') prefs.defaultMode = mode
+      // Only a list we actually saw changes the saved pick; still loading keeps the last one.
+      if (h === picked && modelList) prefs.models = { ...prefs.models, [h.id]: model ?? '' }
+      writePref('tui.json', prefs)
       nav.open(session, h)
     } catch (e: any) {
       setErr(`${e.message}. Press enter to retry.`)
@@ -74,6 +96,10 @@ export function NewSession({ nav, harness, cwd: givenCwd }: { nav: Nav; harness?
     if (hasMode && (k.name === 'tab' || (k.ctrl && k.name === 't'))) {
       const i = claudeModes.findIndex((m) => m.id === mode)
       return setMode(claudeModes[(i + (k.shift ? claudeModes.length - 1 : 1)) % claudeModes.length]!.id)
+    }
+    if ((k.name === 'left' || k.name === 'right') && picked && models.length) {
+      const n = models.length + 1 // slot 0 = agent default
+      return setModelSel({ ...modelSel, [picked.id]: ((msel + 1 + (k.name === 'right' ? 1 : n - 1)) % n) - 1 })
     }
     if (k.name === 'up' || k.name === 'k') return setAgentSel(Math.max(0, agentSel - 1))
     if (k.name === 'down' || k.name === 'j') return setAgentSel(Math.min(agents.length - 1, agentSel + 1))
@@ -125,13 +151,24 @@ export function NewSession({ nav, harness, cwd: givenCwd }: { nav: Nav; harness?
               {claudeModes.map((m) => <span key={m.id} fg={m.id === mode ? accent(picked) : theme.muted}>{m.id === mode ? `⏵ ${m.id}` : m.id}   </span>)}
             </text>
           )}
+          {picked && (
+            <text marginTop={hasMode ? 0 : 1} wrapMode="none">
+              <span fg={theme.muted}>model </span>
+              {!modelList ? <span fg={theme.muted}>loading {picked.label}'s models…</span>
+                : !models.length ? <span fg={theme.muted}>agent default{modelList.error ? ` (could not list models: ${modelList.error})` : ''}</span>
+                : <>
+                  <span fg={accent(picked)}>‹ {pickedModel ? pickedModel.label : `default${modelList.current ? ` (${modelList.current})` : ''}`} ›</span>
+                  <span fg={theme.muted}>  {msel + 2}/{models.length + 1}  {pickedModel?.description ?? ''}</span>
+                </>}
+            </text>
+          )}
           {busy && picked && <text fg={theme.muted} marginTop={1}>Starting {picked.label} in {shortPath(cwd)}…</text>}
         </>}
       </box>
       {err && <text fg={theme.danger}> {err}</text>}
       <KeyHints hints={!cwd
         ? [['enter', 'pick folder'], ['↑↓', 'move'], ['esc', 'back']]
-        : [['enter', 'start'], ['↑↓', 'agent'], ...(hasMode ? [['tab', 'mode'] as [string, string]] : []), ['esc', givenCwd ? 'back' : 'change folder']]} />
+        : [['enter', 'start'], ['↑↓', 'agent'], ...(hasMode ? [['tab', 'mode'] as [string, string]] : []), ...(models.length ? [['←→', 'model'] as [string, string]] : []), ['esc', givenCwd ? 'back' : 'change folder']]} />
     </box>
   )
 }

@@ -26,11 +26,14 @@ export function Wall({ nav, tiles, focus, setFocus, full, setFull, active, onClo
   const [input, setInput] = useState('')
   const [palSel, setPalSel] = useState(0)
   const [logFocus, setLogFocus] = useState(false)
-  // /permissions picker: selected row, and whether bypassPermissions is waiting for its confirm.
-  const [picker, setPicker] = useState<{ sel: number; confirm: boolean } | null>(null)
+  // /permissions or /model picker: selected row, and whether bypassPermissions is waiting for its confirm.
+  const [picker, setPicker] = useState<{ kind: 'mode' | 'model'; sel: number; confirm: boolean } | null>(null)
 
   const s = cur.current
   const modes = s?.modes ?? []
+  const choices = picker?.kind === 'model' ? (s?.models ?? []) : modes
+  const current = picker?.kind === 'model' ? s?.model : s?.mode
+  const pickStart = picker ? Math.max(0, Math.min(picker.sel - 4, choices.length - 10)) : 0
   const typing = active && !logFocus && !picker && !s?.pending
   const paletteOpen = typing && /^\/\S*$/.test(input)
   const palItems = paletteOpen ? filterCommands(s?.commands ?? [], input) : []
@@ -42,7 +45,13 @@ export function Wall({ nav, tiles, focus, setFocus, full, setFull, active, onClo
     if (cmd === 'stop') { setInput(''); return s?.stop() }
     if (cmd === 'permissions' || cmd === 'mode') {
       setInput('')
-      return setPicker({ sel: Math.max(0, modes.findIndex((m) => m.id === s?.mode)), confirm: false })
+      return setPicker({ kind: 'mode', sel: Math.max(0, modes.findIndex((m) => m.id === s?.mode)), confirm: false })
+    }
+    if (cmd === 'model') {
+      setInput('')
+      const models = s?.models ?? []
+      if (!models.length) return s?.setErr(`${s.harness.label} has not reported any models for this session yet. Type /model <id> to set one.`)
+      return setPicker({ kind: 'model', sel: Math.max(0, models.findIndex((m) => m.id === s?.model)), confirm: false })
     }
     if (cmd) setInput(`/${cmd} `)
   }
@@ -51,6 +60,8 @@ export function Wall({ nav, tiles, focus, setFocus, full, setFull, active, onClo
     if (paletteOpen) return runCommand(palItems[palSel])
     if ((!text && !images.length) || !s) return
     setInput('')
+    const typedModel = /^\/model\s+(\S+)\s*$/.exec(text)?.[1]
+    if (typedModel && !images.length) return void s.setModel(typedModel)
     // shortcut: a failed send restores the text but drops the image chips; keep chips on failure if it bites.
     if (!(await s.send(text, images))) setInput(text)
   }
@@ -71,9 +82,10 @@ export function Wall({ nav, tiles, focus, setFocus, full, setFull, active, onClo
     if (picker) {
       eat()
       if (k.name === 'escape') return setPicker(null)
-      if (k.name === 'up' || k.name === 'down') return setPicker({ sel: Math.max(0, Math.min(modes.length - 1, picker.sel + (k.name === 'down' ? 1 : -1))), confirm: false })
-      const m = modes[picker.sel]
+      if (k.name === 'up' || k.name === 'down') return setPicker({ ...picker, sel: Math.max(0, Math.min(choices.length - 1, picker.sel + (k.name === 'down' ? 1 : -1))), confirm: false })
+      const m = choices[picker.sel]
       if (k.name === 'return' && m) {
+        if (picker.kind === 'model') { setPicker(null); return void s.setModel(m.id) }
         if (m.id === 'bypassPermissions' && !picker.confirm) return setPicker({ ...picker, confirm: true })
         setPicker(null)
         return void s.setMode(m.id)
@@ -123,14 +135,15 @@ export function Wall({ nav, tiles, focus, setFocus, full, setFull, active, onClo
       {s?.err && <text fg={theme.danger} paddingX={1} flexShrink={0}>{s.err}</text>}
       {picker && (
         <box flexDirection="column" flexShrink={0} paddingX={1}>
-          <text fg={theme.muted}>{label} mode · ↑↓ pick · enter switch · esc cancel</text>
-          {modes.map((m, i) => (
+          <text fg={theme.muted}>{label} {picker.kind} · ↑↓ pick · enter switch · esc cancel</text>
+          {/* model lists can be long: show 10 rows around the selection */}
+          {choices.slice(pickStart, pickStart + 10).map((m, j) => { const i = pickStart + j; return (
             <text key={m.id} wrapMode="none">
-              <span fg={color}>{i === picker.sel ? '› ' : '  '}{m.id === s?.mode ? '⏵ ' : '  '}</span>
+              <span fg={color}>{i === picker.sel ? '› ' : '  '}{m.id === current ? '⏵ ' : '  '}</span>
               {i === picker.sel ? <b>{m.label}</b> : m.label}
               <span fg={theme.muted}>  {m.description ?? ''}</span>
             </text>
-          ))}
+          ) })}
           {picker.confirm && <text fg={theme.danger}>bypassPermissions runs every tool without asking. Press enter again to switch, esc to cancel.</text>}
         </box>
       )}
@@ -155,12 +168,13 @@ export function Wall({ nav, tiles, focus, setFocus, full, setFull, active, onClo
         tokens={s?.tokens ?? 0}
         cost={s?.cost ?? 0}
         mode={s?.mode}
+        model={s?.model}
         color={color}
         hints={s?.pending
           ? [['y', 'allow'], ['a', 'always'], ['n', 'deny'], ['alt+1-9', 'tile']]
           : logFocus
-            ? [['enter', 'expand'], ['t', 'thinking'], ['tab', 'input'], ['esc', 'stop']]
-            : [['esc', 'stop'], ['ctrl+o', 'list'], ['ctrl+n', 'new'], ['ctrl+f', full ? 'tiles' : 'full'], ['ctrl+w', 'close'], ['shift+tab', 'mode'], ['/', 'commands']]}
+            ? [['↑↓', 'pick'], ['enter', 'open/full'], ['e', 'all tools'], ['t', 'thinking'], ['tab', 'input']]
+            : [['tab', 'tools'], ['esc', 'stop'], ['ctrl+o', 'list'], ['ctrl+n', 'new'], ['ctrl+f', full ? 'tiles' : 'full'], ['ctrl+w', 'close'], ['shift+tab', 'mode'], ['/', 'commands']]}
       />
     </box>
   )

@@ -1,11 +1,19 @@
-import type { Ev, Harness, LogLine, ModeId, SessionMeta } from '@crewd/protocol'
-import { SdkOrchestrator, type UserContent } from '../sdk.ts'
+import type { Ev, Harness, LogLine, ModeId, ModelList, SessionMeta } from '@crewd/protocol'
+import { AsyncQueue } from '../../util/async-queue.ts'
+import { SdkOrchestrator, toModelInfo, withTimeout, type UserContent } from '../sdk.ts'
 import { claudeMessageToEv } from './claude.ts'
 
 // Qoder Agent SDK mirrors Claude's: https://docs.qoder.com/cli/sdk/references-typescript.md
 // Optional dependency, so only the parts crewd touches are typed here.
 type UserMessage = { type: 'user'; message: { role: 'user'; content: Exclude<UserContent, string> }; parent_tool_use_id: null }
-type Query = AsyncGenerator<unknown, void> & { interrupt(): Promise<unknown>; setPermissionMode(mode: string): Promise<void> }
+type QoderModel = { value: string; displayName: string; description: string; isDefault?: boolean; isEnabled?: boolean }
+type Query = AsyncGenerator<unknown, void> & {
+  interrupt(): Promise<unknown>
+  setPermissionMode(mode: string): Promise<void>
+  setModel(model?: string): Promise<void>
+  initializationResult(): Promise<{ models?: QoderModel[] }>
+  close(): Promise<void>
+}
 type SessionInfo = { sessionId: string; summary: string; lastModified: number; customTitle?: string; firstPrompt?: string; cwd?: string; createdAt?: number }
 type SessionMessage = { type: 'user' | 'assistant' | 'system'; message: unknown }
 type QoderSdk = {
@@ -33,6 +41,9 @@ function auth(sdk: QoderSdk) {
 }
 
 const str = (v: unknown): v is string => typeof v === 'string'
+// Asked before init finishes, the CLI reports every model disabled; init's list has the account applied.
+// Disabled = not on this account's plan, so they are left out.
+const models = (q: Query) => q.initializationResult().then((r) => (r.models ?? []).filter((m) => m.isEnabled !== false))
 
 export class QoderSdkOrchestrator extends SdkOrchestrator {
   private q?: Query
@@ -50,6 +61,7 @@ export class QoderSdkOrchestrator extends SdkOrchestrator {
         cwd: this.cwd,
         resume: this.sessionId,
         auth: auth(sdk),
+        ...(this.startModel && { model: this.startModel }),
         mcpServers: Object.fromEntries(
           this.mcp.filter((s) => s.enabled !== false).map((s) => [s.name, { type: 'stdio', command: s.command, args: s.args, env: s.env }]),
         ),
@@ -60,6 +72,7 @@ export class QoderSdkOrchestrator extends SdkOrchestrator {
           this.canUseTool(tool, input, opts),
       },
     })
+    this.loadModels(models(this.q))
     yield* this.q
   }
 
@@ -71,6 +84,12 @@ export class QoderSdkOrchestrator extends SdkOrchestrator {
     if (!this.q) throw new Error('Qoder session not started')
     await this.q.setPermissionMode(mode)
     this.emitMode(mode)
+  }
+
+  async setModel(model: string) {
+    if (!this.q) throw new Error('Qoder session not started')
+    await this.q.setModel(model)
+    this.emitModel(model)
   }
 
   // Ending the input lets an idle CLI exit; stop the generator if a turn keeps it busy.
@@ -105,6 +124,20 @@ export class QoderSdkOrchestrator extends SdkOrchestrator {
         updatedAt: s.lastModified,
         source: 'native',
       }))
+  }
+
+  // A query that never gets a prompt: the CLI starts and answers control requests without calling the model.
+  static override async listModels(_h: Harness, cwd: string): Promise<ModelList> {
+    const sdk = await loadSdk()
+    const inbox = new AsyncQueue<UserMessage>()
+    const q = sdk.query({ prompt: inbox, options: { cwd, auth: auth(sdk) } })
+    try {
+      const list = await withTimeout(models(q), 15000, 'Qoder model list')
+      return { models: list.map(toModelInfo), current: list.find((m) => m.isDefault)?.value }
+    } finally {
+      inbox.close()
+      await q.close().catch(() => {})
+    }
   }
 
   static override async loadHistory(_h: Harness, nativeId: string): Promise<LogLine[]> {

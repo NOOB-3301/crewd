@@ -25,12 +25,13 @@ export function Tile({ t, n, focused, full, hidden, logFocus, active, width, rep
   const s = useSession(t.session, t.harness, onLive)
   const [logSel, setLogSel] = useState(0)
   const [open, setOpen] = useState<Set<string>>(new Set())
+  const [whole, setWhole] = useState<Set<string>>(new Set()) // open tool lines shown unclipped
   const [showThinking, setShowThinking] = useState(false)
   const scroll = useRef<ScrollBoxRenderable>(null)
 
   if (focused) report.current = s
   // Re-render the wall when something it shows for the focused tile changes (status bar, palette, prompt keys).
-  useEffect(() => { if (focused) changed() }, [focused, s.session, s.status, s.mode, s.modes, s.commands, s.pending, s.err, s.tokens, s.cost])
+  useEffect(() => { if (focused) changed() }, [focused, s.session, s.status, s.mode, s.modes, s.model, s.models, s.commands, s.pending, s.err, s.tokens, s.cost])
 
   // Only the latest agent reply is shown in full; older ones fold to one line until opened (enter).
   const lastAgent = s.blocks.map((b) => b.who).lastIndexOf('agent')
@@ -40,14 +41,43 @@ export function Tile({ t, n, focused, full, hidden, logFocus, active, width, rep
     : isOld(i) ? [{ key: `b${i}` }, ...(open.has(`b${i}`) ? b.items.filter((x) => x.k !== 'text') : [])]
     : b.items.filter((x) => x.k !== 'text'),
   ) as { key: string }[]
+  const isTool = (key: string) => key.startsWith('tool')
+
+  // Entering the transcript starts on the newest line, not the first one.
+  useEffect(() => { if (focused && logFocus) setLogSel(Math.max(0, selectable.length - 1)) }, [focused, logFocus])
+
+  /** enter or click: tool lines cycle closed -> open (clipped) -> full -> closed; other lines just toggle. */
+  function cycle(key: string) {
+    const without = (set: Set<string>) => { const x = new Set(set); x.delete(key); return x }
+    if (!open.has(key)) return setOpen(new Set(open).add(key))
+    if (isTool(key) && !whole.has(key)) return setWhole(new Set(whole).add(key))
+    setOpen(without(open))
+    setWhole(without(whole))
+  }
+
+  /** e: open every tool line in reach, or close them all when they already are. */
+  function toggleAll() {
+    const keys = selectable.map((x) => x.key).filter(isTool)
+    if (keys.every((k) => open.has(k))) {
+      setOpen(new Set([...open].filter((k) => !isTool(k))))
+      setWhole(new Set())
+    } else setOpen(new Set([...open, ...keys]))
+  }
+
+  function click(key: string) {
+    const i = selectable.findIndex((x) => x.key === key)
+    if (i >= 0) setLogSel(i)
+    cycle(key)
+  }
 
   useKeyboard((k) => {
     if (!active || !focused) return
     if (k.name === 'pageup' || k.name === 'pagedown') return scroll.current?.scrollBy(k.name === 'pageup' ? -10 : 10)
     if (!logFocus) return
     if (k.name === 't') return setShowThinking((v) => !v)
+    if (k.name === 'e') return toggleAll()
     const cur = selectable[logSel]
-    if (k.name === 'return' && cur) return setOpen((o) => { const x = new Set(o); x.has(cur.key) ? x.delete(cur.key) : x.add(cur.key); return x })
+    if (k.name === 'return' && cur) return cycle(cur.key)
     const d = k.name === 'up' || k.name === 'k' ? -1 : k.name === 'down' || k.name === 'j' ? 1 : 0
     if (d && selectable.length) {
       const i = Math.max(0, Math.min(selectable.length - 1, logSel + d))
@@ -82,7 +112,7 @@ export function Tile({ t, n, focused, full, hidden, logFocus, active, width, rep
           ) : b.who === 'error' ? (
             <Rail key={i} color={theme.danger} label="error"><text fg={theme.danger}>{b.message}</text></Rail>
           ) : isOld(i) && !open.has(`b${i}`) ? (
-            <box key={i} id={`b${i}`} maxWidth={110} paddingLeft={2} marginBottom={1}>
+            <box key={i} id={`b${i}`} maxWidth={110} paddingLeft={2} marginBottom={1} onMouseDown={() => click(`b${i}`)}>
               <text fg={theme.muted} wrapMode="none">
                 <span fg={selKey === `b${i}` ? color : undefined}>▸ </span>{t.harness.label} · {preview(b.items)}
               </text>
@@ -93,7 +123,11 @@ export function Tile({ t, n, focused, full, hidden, logFocus, active, width, rep
               {b.items.map((it, j) =>
                 it.k === 'text' ? <Markdown key={j} text={it.text} streaming={it.open} />
                 : it.k === 'thinking' ? <box key={it.key} id={it.key}><ThinkingLine text={it.text} open={showThinking || open.has(it.key)} selected={selKey === it.key} /></box>
-                : <box key={it.key} id={it.key}><ToolLine t={it} open={open.has(it.key)} selected={selKey === it.key} width={w} /></box>,
+                : (
+                  <box key={it.key} id={it.key} onMouseDown={() => click(it.key)}>
+                    <ToolLine t={it} open={open.has(it.key)} full={whole.has(it.key)} selected={selKey === it.key} width={w} />
+                  </box>
+                ),
               )}
             </Rail>
           )

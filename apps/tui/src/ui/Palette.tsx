@@ -9,6 +9,7 @@ export const crewdCommands: PalItem[] = [
   { name: 'stop', description: 'stop the current turn', crewd: true },
   { name: 'permissions', description: 'pick the permission mode (incl. bypassPermissions)', crewd: true },
   { name: 'mode', description: 'same as /permissions', crewd: true },
+  { name: 'model', description: 'pick the model (or type /model <id>)', crewd: true },
 ]
 
 /** Commands matching what was typed after `/`: prefix matches first, then substring; crewd's own win name clashes. */

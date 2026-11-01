@@ -24,6 +24,11 @@ export type SessionStatus = 'running' | 'waiting' | 'idle' | 'interrupted' | 'de
 export type ModeId = string
 export type ModeInfo = { id: ModeId; label: string; description?: string }
 
+/** A model as the harness names it (Claude/Qoder model value, or an ACP agent's 'model' config option value). */
+export type ModelInfo = { id: string; label: string; description?: string }
+/** GET /harnesses/:id/models. current = the agent's default for that cwd, when it says; error = why the list is empty. */
+export type ModelList = { models: ModelInfo[]; current?: string; error?: string }
+
 /** One answer the user can pick for a permission request. kind drives the TUI keys (1/y allow, 2/a always, 3/n deny). */
 export type PermissionOption = { id: string; label: string; kind: 'allow' | 'always' | 'deny' }
 
@@ -44,6 +49,8 @@ export type SessionMeta = {
   mcp?: string[]
   /** current mode; undefined until the harness reports one (or for harnesses without modes) */
   permissionMode?: ModeId
+  /** model picked at create time or switched to since; undefined = the harness default */
+  model?: string
 }
 
 /** A slash command as the harness reports it (name without the leading slash). */
@@ -65,6 +72,8 @@ export type Ev =
   | { type: 'permission_resolved'; requestId: string; optionId?: string }
   /** current mode plus the modes this session can switch to (Claude: its PermissionModes; ACP: the agent's own) */
   | { type: 'mode'; mode: ModeId; available: ModeInfo[] }
+  /** current model (undefined = harness default, not yet reported) plus the models this session can switch to */
+  | { type: 'model'; model?: string; available: ModelInfo[] }
   | { type: 'error'; message: string }
   | { type: 'raw'; data: unknown }
 
@@ -101,18 +110,20 @@ export type Usage = {
 export type HarnessInfo = Harness & { installed: boolean; caps: Caps; count: number }
 
 // Request bodies
-export type CreateSessionBody = { harness: string; cwd: string; resumeId?: string; mcp?: string[]; permissionMode?: ModeId }
+export type CreateSessionBody = { harness: string; cwd: string; resumeId?: string; mcp?: string[]; permissionMode?: ModeId; model?: string }
 /** images: absolute paths to image files on this machine; the daemon reads and encodes them for the harness. */
 export type ImageRef = { path: string; mime: string }
 export type SendBody = { text: string; images?: ImageRef[] }
 export type PermissionAnswerBody = { optionId: string }
 export type ModeBody = { mode: ModeId }
+export type ModelBody = { model: string }
 
 export const SOCKET_NAME = 'crewd.sock'
 
 export const routes = {
   harnesses: '/harnesses',
   harnessSessions: (id: string) => `/harnesses/${encodeURIComponent(id)}/sessions`,
+  harnessModels: (id: string) => `/harnesses/${encodeURIComponent(id)}/models`,
   sessions: '/sessions',
   session: (id: string) => `/sessions/${encodeURIComponent(id)}`,
   history: (id: string) => `/sessions/${encodeURIComponent(id)}/history`,
@@ -121,6 +132,7 @@ export const routes = {
   events: (id: string) => `/sessions/${encodeURIComponent(id)}/events`,
   permission: (id: string, requestId: string) => `/sessions/${encodeURIComponent(id)}/permissions/${encodeURIComponent(requestId)}`,
   mode: (id: string) => `/sessions/${encodeURIComponent(id)}/mode`,
+  model: (id: string) => `/sessions/${encodeURIComponent(id)}/model`,
   mcp: '/mcp',
   usage: '/usage',
 } as const

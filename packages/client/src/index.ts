@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   routes, SOCKET_NAME,
-  type CreateSessionBody, type HarnessInfo, type Usage, type ImageRef, type LogLine, type McpServer, type ModeId, type SessionMeta,
+  type CreateSessionBody, type HarnessInfo, type Usage, type ImageRef, type LogLine, type McpServer, type ModeId, type ModelList, type SessionMeta,
 } from '@crewd/protocol'
 
 export const crewdHome = process.env.CREWD_HOME ?? join(homedir(), '.crewd')
@@ -28,6 +28,9 @@ const post = <T>(path: string, body?: unknown) =>
 
 export const harnesses = () => call<HarnessInfo[]>(routes.harnesses)
 export const harnessSessions = (id: string) => call<SessionMeta[]>(routes.harnessSessions(id))
+/** Models the harness offers in cwd (default: home). The daemon caches lists for 10 min; refresh skips that. */
+export const harnessModels = (id: string, cwd?: string, refresh = false) =>
+  call<ModelList>(`${routes.harnessModels(id)}?${new URLSearchParams({ ...(cwd && { cwd }), ...(refresh && { refresh: '1' }) })}`)
 export const createSession = (body: CreateSessionBody) => post<SessionMeta>(routes.sessions, body)
 /** Sessions the daemon is running or has run (source 'crewd'), newest first. Daemon: GET routes.sessions. */
 export const liveSessions = () => call<SessionMeta[]>(routes.sessions)
@@ -37,6 +40,7 @@ export const send = (id: string, text: string, images?: ImageRef[]) =>
 export const answerPermission = (id: string, requestId: string, optionId: string) =>
   post<unknown>(routes.permission(id, requestId), { optionId })
 export const setMode = (id: string, mode: ModeId) => post<SessionMeta>(routes.mode(id), { mode })
+export const setModel = (id: string, model: string) => post<SessionMeta>(routes.model(id), { model })
 export const interrupt = (id: string) => post<unknown>(routes.interrupt(id))
 export const deleteSession = (id: string) => call<unknown>(routes.session(id), { method: 'DELETE' })
 /** Fresh account usage per agent; the daemon never caches it. */
