@@ -1,0 +1,22 @@
+{
+  "name": "@crewd/tui",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "crew": "./src/main.tsx"
+  },
+  "scripts": {
+    "start": "bun run src/main.tsx"
+  },
+  "dependencies": {
+    "@crewd/client": "workspace:*",
+    "@crewd/protocol": "workspace:*",
+    "@opentui/core": "0.8.1",
+    "@opentui/react": "0.8.1",
+    "react": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "@types/react": "^19.3.0"
+  }
+}
