@@ -4,15 +4,16 @@ import type { Harness, SessionStatus } from '@crewd/protocol'
 // Accents only: the app never paints a background, so it follows the terminal's theme.
 export const theme = {
   muted: '#8A8F98',
+  subtle: '#3B3F46',
   danger: '#FF6B6B',
   ok: '#8BD17C',
   warn: '#FFD75F',
 }
 
 const accents: Record<string, string> = {
-  claude: '#C9A0FF',
+  claude: '#F2C14E',
   qoder: '#5FD3BC',
-  opencode: '#F2C14E',
+  opencode: '#C9A0FF',
   pi: '#7AA7FF',
 }
 const fallback = ['#E58FB5', '#9AD06B', '#F29B6B', '#6FC3E8', '#D7A8E0']
