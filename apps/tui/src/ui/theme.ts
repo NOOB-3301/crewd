@@ -25,7 +25,7 @@ export function accent(h: Pick<Harness, 'id' | 'color'> | undefined): string {
   return fallback[hash % fallback.length]!
 }
 
-export const glyph: Record<SessionStatus, string> = { running: '●', idle: '○', interrupted: '◌', dead: '×' }
+export const glyph: Record<SessionStatus, string> = { running: '●', waiting: '◆', idle: '○', interrupted: '◌', dead: '×' }
 
 export function shortPath(p: string): string {
   const home = homedir()

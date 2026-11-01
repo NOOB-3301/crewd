@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   routes, SOCKET_NAME,
-  type CreateSessionBody, type HarnessInfo, type LogLine, type McpServer, type SessionMeta,
+  type CreateSessionBody, type HarnessInfo, type ImageRef, type LogLine, type McpServer, type ModeId, type SessionMeta,
 } from '@crewd/protocol'
 
 export const crewdHome = process.env.CREWD_HOME ?? join(homedir(), '.crewd')
@@ -29,8 +29,14 @@ const post = <T>(path: string, body?: unknown) =>
 export const harnesses = () => call<HarnessInfo[]>(routes.harnesses)
 export const harnessSessions = (id: string) => call<SessionMeta[]>(routes.harnessSessions(id))
 export const createSession = (body: CreateSessionBody) => post<SessionMeta>(routes.sessions, body)
+/** Sessions the daemon is running or has run (source 'crewd'), newest first. Daemon: GET routes.sessions. */
+export const liveSessions = () => call<SessionMeta[]>(routes.sessions)
 export const history = (id: string) => call<LogLine[]>(routes.history(id))
-export const send = (id: string, text: string) => post<unknown>(routes.messages(id), { text })
+export const send = (id: string, text: string, images?: ImageRef[]) =>
+  post<unknown>(routes.messages(id), images?.length ? { text, images } : { text })
+export const answerPermission = (id: string, requestId: string, optionId: string) =>
+  post<unknown>(routes.permission(id, requestId), { optionId })
+export const setMode = (id: string, mode: ModeId) => post<SessionMeta>(routes.mode(id), { mode })
 export const interrupt = (id: string) => post<unknown>(routes.interrupt(id))
 export const deleteSession = (id: string) => call<unknown>(routes.session(id), { method: 'DELETE' })
 export const getMcp = () => call<McpServer[]>(routes.mcp)

@@ -6,10 +6,11 @@ import {
   type Query,
   type SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk'
-import type { Ev, Harness, LogLine, SessionMeta } from '@crewd/protocol'
+import type { Cmd, Ev, Harness, LogLine, SessionMeta } from '@crewd/protocol'
 import { SdkOrchestrator } from '../sdk.ts'
 
 const str = (v: unknown): v is string => typeof v === 'string'
+const toCmd = (c: any): Cmd => (str(c) ? { name: c } : { name: c?.name ?? '', description: c?.description || undefined, hint: c?.argumentHint || undefined })
 
 /** Claude SDK message -> crewd events. Pure; Qoder reuses it because its SDK mirrors these shapes. */
 export function claudeMessageToEv(msg: unknown): Ev[] {
@@ -18,9 +19,9 @@ export function claudeMessageToEv(msg: unknown): Ev[] {
     if (!m || typeof m !== 'object') return [{ type: 'raw', data: msg }]
 
     if (m.type === 'system' && m.subtype === 'init' && Array.isArray(m.slash_commands))
-      return [{ type: 'commands', list: m.slash_commands.filter(str) }, { type: 'raw', data: m }]
+      return [{ type: 'commands', list: m.slash_commands.filter(str).map((name: string) => ({ name })) }, { type: 'raw', data: m }]
     if (m.type === 'system' && m.subtype === 'commands_changed' && Array.isArray(m.commands))
-      return [{ type: 'commands', list: m.commands.map((c: any) => (str(c) ? c : c?.name)).filter(str) }]
+      return [{ type: 'commands', list: m.commands.map(toCmd).filter((c: Cmd) => c.name) }]
 
     const content = m.message?.content
     if (m.type === 'assistant' && Array.isArray(content)) {
@@ -73,6 +74,8 @@ export class ClaudeSdkOrchestrator extends SdkOrchestrator {
         permissionMode: (process.env.CREWD_CLAUDE_PERMISSION_MODE ?? 'acceptEdits') as PermissionMode,
       },
     })
+    // The list with descriptions is ready before the first message; init only brings bare names later.
+    this.q.supportedCommands().then((l) => this.outbox.push({ type: 'commands', list: l.map(toCmd) }), () => {})
     return this.q
   }
 
@@ -87,7 +90,9 @@ export class ClaudeSdkOrchestrator extends SdkOrchestrator {
   }
 
   protected toEv(msg: unknown) {
-    return claudeMessageToEv(msg)
+    const evs = claudeMessageToEv(msg)
+    // init's bare names would replace the described list from supportedCommands()
+    return (msg as any)?.subtype === 'init' ? evs.filter((e) => e.type !== 'commands') : evs
   }
 
   protected readNativeId(msg: unknown) {

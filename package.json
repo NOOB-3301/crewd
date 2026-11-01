@@ -6,7 +6,7 @@
   "scripts": {
     "build": "bun run --filter '@crewd/daemon' build",
     "daemon": "bun run --filter '@crewd/daemon' start",
-    "tui": "bun run --filter '@crewd/tui' start",
+    "tui": "bun apps/tui/src/main.tsx",
     "typecheck": "tsc -p apps/daemon --noEmit && tsc -p apps/tui --noEmit"
   },
   "devDependencies": {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ScrollBoxRenderable } from '@opentui/core'
 import { useKeyboard, useTerminalDimensions } from '@opentui/react'
-import type { HarnessInfo, LogLine, SessionMeta, SessionStatus } from '@crewd/protocol'
+import type { Cmd, HarnessInfo, LogLine, SessionMeta, SessionStatus } from '@crewd/protocol'
 import * as client from '@crewd/client'
 import type { Nav } from '../nav.ts'
 import { Markdown } from '../ui/Markdown.tsx'
@@ -91,7 +91,7 @@ export function Chat({ nav, session: initial, harness }: { nav: Nav; session: Se
   const all = useMemo(() => [...past, ...lines], [past, lines])
   const blocks = useMemo(() => toBlocks(all), [all])
   const { status, tokens, cost, commands } = useMemo(() => {
-    let status: SessionStatus = session.status, tokens = 0, cost = 0, commands: string[] = []
+    let status: SessionStatus = session.status, tokens = 0, cost = 0, commands: Cmd[] = []
     for (const l of lines) {
       if (l.kind !== 'event') continue
       const ev = l.ev
@@ -111,17 +111,24 @@ export function Chat({ nav, session: initial, harness }: { nav: Nav; session: Se
     try { await client.interrupt(session.id) } catch (e: any) { setErr(`Could not stop the turn: ${e.message}`) }
   }
 
+  // A session found in the harness's own store has no live process; resuming it gives us one (and its commands).
+  const live = useRef<Promise<SessionMeta> | null>(null)
+  function goLive(): Promise<SessionMeta> {
+    if (session.source !== 'native') return Promise.resolve(session)
+    live.current ??= client.createSession({ harness: harness.id, cwd: session.cwd, resumeId: session.nativeId ?? session.id }).then((s) => {
+      setPast(all)
+      setLines([])
+      setSession(s)
+      return s
+    }, (e) => { live.current = null; throw e })
+    return live.current
+  }
+
   async function sendText(text: string) {
     setInput('')
     setErr('')
     try {
-      let s = session
-      if (s.source === 'native') {
-        s = await client.createSession({ harness: harness.id, cwd: s.cwd, resumeId: s.nativeId ?? s.id })
-        setPast(all)
-        setLines([])
-        setSession(s)
-      }
+      const s = await goLive()
       await client.send(s.id, text)
     } catch (e: any) {
       setInput(text)
@@ -129,7 +136,8 @@ export function Chat({ nav, session: initial, harness }: { nav: Nav; session: Se
     }
   }
 
-  function runCommand(cmd: string | undefined) {
+  function runCommand(c: { name: string } | undefined) {
+    const cmd = c?.name
     if (cmd === 'new') return nav.push({ name: 'new', harness })
     if (cmd === 'sessions') return nav.push({ name: 'sessions', harness })
     if (cmd === 'stop') { setInput(''); return stop() }
@@ -195,7 +203,7 @@ export function Chat({ nav, session: initial, harness }: { nav: Nav; session: Se
           )}
         </scrollbox>
         {err && <text fg={theme.danger} paddingX={1} flexShrink={0}>{err}</text>}
-        {paletteOpen && <Palette items={palItems} selected={Math.min(palSel, palItems.length - 1)} color={color} />}
+        {paletteOpen && <Palette items={palItems} selected={Math.min(palSel, palItems.length - 1)} color={color} vendor={harness.label} width={width - 4} />}
         <box border={["top"]} borderColor={theme.muted} flexDirection="row" paddingX={1} flexShrink={0}>
           <text fg={color}>› </text>
           <input
@@ -205,7 +213,11 @@ export function Chat({ nav, session: initial, harness }: { nav: Nav; session: Se
             placeholderColor={theme.muted}
             focusedBackgroundColor="transparent"
             backgroundColor="transparent"
-            onInput={(v) => { setInput(v); setPalSel(0) }}
+            onInput={(v) => {
+              setInput(v)
+              setPalSel(0)
+              if (v.startsWith('/')) goLive().catch((e) => setErr(`Could not load ${harness.label}'s commands: ${e.message}`))
+            }}
             onSubmit={() => (paletteOpen ? runCommand(palItems[palSel]) : input.trim() ? sendText(input.trim()) : undefined)}
             flexGrow={1}
           />

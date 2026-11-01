@@ -16,7 +16,16 @@ export type Harness = {
 
 export type Caps = { list: boolean; load: boolean; fork: boolean; interrupt: boolean }
 
-export type SessionStatus = 'running' | 'idle' | 'interrupted' | 'dead'
+/** running = turn in progress; waiting = turn blocked on a permission_request the user must answer. */
+export type SessionStatus = 'running' | 'waiting' | 'idle' | 'interrupted' | 'dead'
+
+/** A mode id as the harness names it: Claude's PermissionMode ('auto', 'default', 'acceptEdits', 'plan',
+ * 'bypassPermissions', ...) or an ACP agent's own SessionMode id (e.g. OpenCode 'build' / 'plan'). */
+export type ModeId = string
+export type ModeInfo = { id: ModeId; label: string; description?: string }
+
+/** One answer the user can pick for a permission request. kind drives the TUI keys (1/y allow, 2/a always, 3/n deny). */
+export type PermissionOption = { id: string; label: string; kind: 'allow' | 'always' | 'deny' }
 
 export type SessionMeta = {
   id: string
@@ -33,7 +42,12 @@ export type SessionMeta = {
   source: 'crewd' | 'native'
   /** MCP server names picked at create time; undefined = the enabled ones */
   mcp?: string[]
+  /** current mode; undefined until the harness reports one (or for harnesses without modes) */
+  permissionMode?: ModeId
 }
+
+/** A slash command as the harness reports it (name without the leading slash). */
+export type Cmd = { name: string; description?: string; hint?: string }
 
 // crewd's UI vocabulary, not a list of harness events. Orchestrators map what the TUI
 // renders differently; everything else becomes `raw` so nothing is dropped.
@@ -44,7 +58,13 @@ export type Ev =
   | { type: 'tool'; id: string; name: string; status: 'start' | 'end' | 'error'; input?: unknown; output?: unknown }
   | { type: 'turn_end'; usage?: unknown; costUsd?: number }
   | { type: 'status'; state: SessionStatus }
-  | { type: 'commands'; list: string[] }
+  | { type: 'commands'; list: Cmd[] }
+  /** the agent asks before running a tool; answer with POST routes.permission(sessionId, requestId) */
+  | { type: 'permission_request'; requestId: string; tool: string; title?: string; input?: unknown; options: PermissionOption[] }
+  /** sent once a request is answered (by any client), interrupted, or cancelled by the agent; optionId absent = cancelled */
+  | { type: 'permission_resolved'; requestId: string; optionId?: string }
+  /** current mode plus the modes this session can switch to (Claude: its PermissionModes; ACP: the agent's own) */
+  | { type: 'mode'; mode: ModeId; available: ModeInfo[] }
   | { type: 'error'; message: string }
   | { type: 'raw'; data: unknown }
 
@@ -55,8 +75,12 @@ export type McpServer = { name: string; command: string; args?: string[]; env?: 
 export type HarnessInfo = Harness & { installed: boolean; caps: Caps; count: number }
 
 // Request bodies
-export type CreateSessionBody = { harness: string; cwd: string; resumeId?: string; mcp?: string[] }
-export type SendBody = { text: string }
+export type CreateSessionBody = { harness: string; cwd: string; resumeId?: string; mcp?: string[]; permissionMode?: ModeId }
+/** images: absolute paths to image files on this machine; the daemon reads and encodes them for the harness. */
+export type ImageRef = { path: string; mime: string }
+export type SendBody = { text: string; images?: ImageRef[] }
+export type PermissionAnswerBody = { optionId: string }
+export type ModeBody = { mode: ModeId }
 
 export const SOCKET_NAME = 'crewd.sock'
 
@@ -69,5 +93,7 @@ export const routes = {
   messages: (id: string) => `/sessions/${encodeURIComponent(id)}/messages`,
   interrupt: (id: string) => `/sessions/${encodeURIComponent(id)}/interrupt`,
   events: (id: string) => `/sessions/${encodeURIComponent(id)}/events`,
+  permission: (id: string, requestId: string) => `/sessions/${encodeURIComponent(id)}/permissions/${encodeURIComponent(requestId)}`,
+  mode: (id: string) => `/sessions/${encodeURIComponent(id)}/mode`,
   mcp: '/mcp',
 } as const

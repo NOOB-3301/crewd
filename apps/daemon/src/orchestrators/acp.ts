@@ -164,7 +164,7 @@ function updateToEv(u: Json): Ev[] {
       break
     }
     case 'available_commands_update':
-      return [{ type: 'commands', list: (u.availableCommands ?? []).map((c: Json) => c.name) }]
+      return [{ type: 'commands', list: (u.availableCommands ?? []).map((c: Json) => ({ name: c.name, description: c.description || undefined, hint: c.input?.hint || undefined })) }]
   }
   return [{ type: 'raw', data: u }]
 }
