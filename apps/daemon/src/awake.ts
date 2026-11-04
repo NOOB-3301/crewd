@@ -15,11 +15,16 @@ export function note(delta: number) {
   if (!on) return
   busyCount = Math.max(0, busyCount + delta)
   if (busyCount && !proc) {
-    proc = spawn('caffeinate', ['-i', '-w', String(process.pid)], { stdio: 'ignore' }).on('error', (err) => {
-      proc = undefined
-      busyCount = 0
-      daemonLog('caffeinate unavailable', err)
-    })
+    proc = spawn('caffeinate', ['-i', '-w', String(process.pid)], { stdio: 'ignore' })
+      .on('error', (err) => {
+        proc = undefined
+        busyCount = 0
+        daemonLog('caffeinate unavailable', err)
+      })
+      // Without this a dead child keeps proc truthy forever and no later turn can re-arm the assertion.
+      .on('exit', () => {
+        proc = undefined
+      })
   }
   if (!busyCount && proc) {
     proc.kill()
