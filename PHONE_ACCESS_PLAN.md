@@ -18,6 +18,7 @@ The daemon runs on a Mac at home. From a phone, away from home, the user can:
 | Topic | Decision |
 | --- | --- |
 | Phone client | A native app built with **Expo (React Native)**, in `apps/mobile`. Not a web app. |
+| Target platform | Android only. |
 | Reach the daemon | Tailscale (`tailscale serve`), tailnet-private. ngrok is allowed for short-lived testing only (see Phase 3b). |
 | Transport | Plain HTTP + SSE for streaming, ordinary POSTs for actions. No WebSocket. |
 | Auth | One static bearer token in `~/.crewd/remote-token` (mode `0600`). No rotation, pairing or per-device tracking. |
@@ -105,7 +106,7 @@ TUI ── Unix socket (unchanged, no auth) ─┘
 1. Install Tailscale on the Mac and the phone, signed in to the same tailnet.
 2. In the Tailscale admin console, enable MagicDNS and HTTPS certificates.
 3. On the Mac run `tailscale serve --bg <port>`. Flags vary between versions, so check `tailscale serve --help`. Use `serve`, not `funnel`, because Funnel makes it public.
-4. The result is `https://<mac>.<tailnet>.ts.net`, proxying to `127.0.0.1:<port>`. HTTPS matters because iOS and Android block plain-HTTP requests from apps by default.
+4. The result is `https://<mac>.<tailnet>.ts.net`, proxying to `127.0.0.1:<port>`. HTTPS matters because Android blocks plain-HTTP requests from apps by default.
 
 **Sleep prevention (macOS only):**
 - `setStatus` in `sessions.ts` is the single place where session status changes.
@@ -228,18 +229,42 @@ This touches working code, so it should be its own commit.
 - Restart the daemon with the app open and confirm it reconnects.
 - Lock the phone for a minute, unlock it, and confirm the screen catches up.
 
-## Phase 5b: Getting the app onto the phone
+## Phase 5b: Getting the app onto the phone (Android)
 
-**Open question for the implementer: which phone (iOS or Android), and is there a paid Apple Developer account?** The answer chooses the row below. Do not assume.
+**Target platform: Android.** iOS is out of scope for this plan.
 
-| Situation | Approach |
-| --- | --- |
-| Development, on the same network as Metro | Run Expo Go (the app uses no custom native modules). The bundle comes from the Metro dev server on the Mac, which is only reachable while the phone can reach the Mac (at home, or through Tailscale). |
-| Android, use away from home | Build a release APK (`eas build --profile preview` or a local Gradle build) and install it. Free. |
-| iOS, no paid account | Build locally with Xcode and a free Apple ID. The install expires after about 7 days and must be reinstalled. |
-| iOS, paid account | EAS Build and TestFlight, or ad hoc distribution. |
+### Development (fastest loop)
 
-A standalone build bundles the JavaScript, so it works anywhere the phone can reach the daemon.
+1. Install **Expo Go** from the Play Store. The app uses no custom native modules, so Expo Go can run it.
+2. On the Mac run the Expo dev server from `apps/mobile` (`bunx expo start`) and open the project in Expo Go by scanning the QR code.
+3. The JavaScript bundle comes from the dev server on the Mac, so the phone must be able to reach the Mac. At home that means the same Wi-Fi. Away from home it means the Tailscale app on the phone plus pointing Expo at the Mac's tailnet address (the `REACT_NATIVE_PACKAGER_HOSTNAME` environment variable is the usual way; verify against the installed Expo version).
+4. This is for development only. It needs the Mac's dev server running, so it is not the way to use the app day to day.
+
+### Standalone install (day-to-day use)
+
+A standalone APK bundles the JavaScript, so it works anywhere the phone can reach the daemon. There are two ways to build it. Both are free.
+
+| Option | Steps | Notes |
+| --- | --- | --- |
+| EAS Build (cloud) | Add a `preview` profile to `apps/mobile/eas.json` with `"android": { "buildType": "apk" }`. Run `eas build --platform android --profile preview`. Download the APK from the link it prints. | Needs a free Expo account. The free tier has a monthly build quota and may queue. EAS manages the signing key for you. |
+| Local build | Install JDK 17 and the Android SDK on the Mac. Run `bunx expo prebuild --platform android`, then `./gradlew assembleRelease` in the generated `android/` folder. The APK is under `android/app/build/outputs/apk/release/`. | No quota or queue, but more setup. A local release build is signed with a key you control. |
+
+### Installing the APK
+
+1. Copy the APK to the phone (download link, Google Drive, USB, or `adb install <file>.apk`).
+2. If installing from a file manager or browser, allow "Install unknown apps" for that app when Android asks.
+3. Open the app and go to the Connect screen (see Phase 5).
+
+### Updating the app
+
+- Rebuild and install the new APK over the old one. **It must be signed with the same key as the installed version, or Android will refuse the update.** With EAS, the key is managed for you. With a local build, keep the keystore file backed up.
+- Optional: EAS Update can push JavaScript-only changes over the air. It is not required for this plan.
+
+### Android specifics to be aware of
+
+- Android blocks plain `http://` requests from apps by default, which is why the Connect screen requires `https://`. Tailscale (`tailscale serve`) and ngrok both provide HTTPS.
+- Android allows only one VPN at a time. The Tailscale app uses that slot, so a different VPN must be off while using the app away from home.
+- The app does not run in the background. When Android suspends or kills it, it reconnects and replays when reopened (see "Network layer" in Phase 5). Battery optimisation settings do not need changing.
 
 ## Phase 6: Markdown rendering
 
