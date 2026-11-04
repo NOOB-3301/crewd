@@ -6,6 +6,7 @@ import { useLocalSearchParams } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { answer, ApiError, errorMsg, history, interrupt, send, sessionMeta } from '../../src/api'
 import AgentText from '../../src/AgentText'
+import ModeModel from '../../src/ModeModel'
 import { subscribeSession, useAppActive } from '../../src/stream'
 import { accent, age, Banner, c, cleanTitle, folderName, preview, show, StatusDot } from '../../src/ui'
 import { foldState, toBlocks, type Pending, type ToolItem } from '@crewd/shared'
@@ -139,6 +140,7 @@ export default function Session() {
             <Text style={styles.folder} numberOfLines={1}>
               {folderName(meta.cwd)}
             </Text>
+            {state && <ModeModel sessionId={id} harness={meta.harness} cwd={meta.cwd} state={state} onError={setErr} />}
           </>
         )}
       </View>
