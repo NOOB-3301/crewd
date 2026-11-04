@@ -16,9 +16,14 @@ export default function Sessions() {
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <View style={styles.bar}>
         <Text style={styles.barTitle}>Sessions</Text>
-        <Pressable hitSlop={10} onPress={() => router.push('/connect')}>
-          <Text style={styles.settings}>Settings</Text>
-        </Pressable>
+        <View style={styles.barRight}>
+          <Pressable hitSlop={10} onPress={() => router.push('/new')}>
+            <Text style={styles.new}>+ New</Text>
+          </Pressable>
+          <Pressable hitSlop={10} onPress={() => router.push('/connect')}>
+            <Text style={styles.settings}>Settings</Text>
+          </Pressable>
+        </View>
       </View>
       {!!err && <Banner text={err} onRetry={refresh} />}
       <FlatList
@@ -59,7 +64,9 @@ function Row({ s }: { s: SessionMeta }) {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: c.bg },
   bar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingVertical: 10 },
+  barRight: { flexDirection: 'row', alignItems: 'center', gap: 16 },
   barTitle: { color: c.text, fontSize: 18, fontWeight: '700' },
+  new: { color: c.input, fontSize: 14, fontWeight: '700' },
   settings: { color: c.input, fontSize: 14 },
   list: { padding: 10, gap: 8 },
   empty: { color: c.muted, fontSize: 14, textAlign: 'center', marginTop: 40 },

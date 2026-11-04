@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { AppState } from 'react-native'
 import { fetch } from 'expo/fetch'
-import { routes, type LogLine } from '@crewd/protocol'
+import { routes, type LogLine, type SessionMeta } from '@crewd/protocol'
 import { sseBlocks } from '@crewd/shared'
 import { authHeaders, credentials, goToConnect, url } from './api'
 
@@ -73,6 +73,67 @@ export function subscribeSession(id: string, opts: { after?: number }, onLine: (
   return () => {
     stopped = true
     conn?.abort()
+  }
+}
+
+/**
+ * GET /events: the whole session list as a push stream. `snapshot` replaces it, `session` is one row that changed.
+ * The messages carry no ids and the daemon keeps no backlog (Phase 9), so unlike subscribeSession there is no
+ * Last-Event-ID bookkeeping: a reconnect simply takes the fresh snapshot. `live(false)` is the hook's cue to poll.
+ */
+export function subscribeAllSessions(sink: { snapshot: (list: SessionMeta[]) => void; session: (m: SessionMeta) => void; live: (on: boolean) => void }): () => void {
+  const creds = credentials()
+  if (!creds) return () => {}
+  let stopped = false
+  let conn: AbortController | null = null
+
+  void (async () => {
+    let delay = 250
+    while (!stopped) {
+      const ac = (conn = new AbortController())
+      let timer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => ac.abort(), WATCHDOG_MS)
+      const beat = () => {
+        clearTimeout(timer)
+        timer = setTimeout(() => ac.abort(), WATCHDOG_MS)
+      }
+      try {
+        const res = await fetch(url(routes.allEvents, creds), { signal: ac.signal, headers: { ...authHeaders(creds), accept: 'text/event-stream' } })
+        if (res.status === 401) {
+          stopped = true
+          goToConnect()
+          return
+        }
+        if (!res.ok || !res.body) throw new Error(`events ${res.status}`)
+        delay = 250
+        sink.live(true)
+        const decoder = new TextDecoder()
+        const blocks = sseBlocks()
+        const reader = res.body.getReader()
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          beat()
+          if (!value) continue
+          for (const block of blocks(decoder.decode(value, { stream: true }))) {
+            if (block.event === 'snapshot') sink.snapshot(JSON.parse(block.data) as SessionMeta[])
+            else if (block.event === 'session') sink.session(JSON.parse(block.data) as SessionMeta)
+          }
+        }
+      } catch {
+        if (stopped) return
+      } finally {
+        clearTimeout(timer)
+      }
+      sink.live(false)
+      await new Promise((r) => setTimeout(r, delay))
+      delay = Math.min(delay * 2, MAX_BACKOFF_MS)
+    }
+  })()
+
+  return () => {
+    stopped = true
+    conn?.abort()
+    sink.live(false)
   }
 }
 
