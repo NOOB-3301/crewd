@@ -63,7 +63,7 @@ app.get('/harnesses/:id/models', async (c) => {
   const h = harness(c.req.param('id'))
   if (!registry.installed(h)) throw new HttpError(400, `${h.label} is not installed`)
   const cwd = c.req.query('cwd') || homedir()
-  if (!isAbsolute(cwd) || !statSync(cwd, { throwIfNoEntry: false })?.isDirectory())
+  if (!isAbsolute(cwd) || !isDir(cwd))
     throw new HttpError(400, 'cwd must be an existing absolute directory')
   return c.json(await models.list(h, cwd, c.req.query('refresh') === '1'))
 })
@@ -88,6 +88,15 @@ app.get('/sessions/:id/history', async (c) => {
   throw new HttpError(404, `no session ${id}`)
 })
 
+/** throwIfNoEntry only suppresses ENOENT: a path whose parent is a file throws ENOTDIR, and EACCES throws too. */
+function isDir(path: string) {
+  try {
+    return !!statSync(path, { throwIfNoEntry: false })?.isDirectory()
+  } catch {
+    return false
+  }
+}
+
 /**
  * GET /projects: folders crewd has sessions in, for the phone's new-session picker.
  * The phone cannot browse the Mac's disk. crewd's own sessions only in this version.
@@ -107,7 +116,7 @@ app.get('/projects', (c) => {
   }
   return c.json(
     [...map.values()]
-      .filter((p) => statSync(p.cwd, { throwIfNoEntry: false })?.isDirectory())
+      .filter((p) => isDir(p.cwd))
       .sort((a, b) => b.lastUsed - a.lastUsed)
       .slice(0, 50),
   )

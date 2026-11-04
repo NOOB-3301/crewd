@@ -44,11 +44,14 @@ const sameToken = (a: string, b: string) => {
  * without a preflight the daemon never answers, and it cannot guess the token.
  */
 export function remoteApp() {
+  // Read once: re-reading per request would let a deleted or unreadable file silently mint a new
+  // token and lock out a paired phone. Rotation is deliberately not a thing here.
+  const want = token()
   const remote = new Hono()
   remote.use('/*', async (c, next) => {
     const header = c.req.header('authorization') ?? ''
     const got = header.startsWith('Bearer ') ? header.slice(7).trim() : ''
-    if (!got || !sameToken(got, token())) {
+    if (!got || !sameToken(got, want)) {
       daemonLog('remote denied', c.req.method, c.req.path) // path only, never headers
       return c.json({ error: 'unauthorized' }, 401)
     }

@@ -53,9 +53,12 @@ session('p-new', real)
 log.writeMeta({ ...sessions.get('p-old')!, updatedAt: 50 })
 session('p-temp', mkdtempSync(join(tmpdir(), 'crewd-events-scratch-')))
 session('p-gone', join(dir, 'deleted-folder'))
+session('p-weird', join(dir, 'sessions', 'tail', 'meta.json', 'sub')) // a cwd whose parent is a file: statSync throws ENOTDIR
 const projects = (await (await app.request('/projects')).json()) as { cwd: string; harnesses: string[] }[]
 assert.deepEqual(projects.map((p) => p.cwd), [real], 'only the existing non-temp folder')
 assert.deepEqual(projects[0]?.harnesses, ['claude'], 'harnesses are collected once per folder')
+// An unstatable cwd is the caller's mistake, so it is a 400 with a message, not a 500.
+assert.equal((await app.request('/harnesses/claude/models?cwd=/etc/passwd/sub')).status, 400)
 
 // The global stream: a snapshot on connect, then a message per metadata change.
 const res = await app.request('/events')

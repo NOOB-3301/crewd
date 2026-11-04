@@ -1,7 +1,7 @@
 // Self-check: bun apps/daemon/src/remote.check.ts
 // Remote config parsing, the token file, and the auth gate on every route shape a client can send.
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -38,6 +38,13 @@ assert.equal((await ask('Basic ' + t)).status, 401, 'wrong scheme')
 assert.equal((await ask(`Bearer ${t}x`)).status, 401, 'one character off the end')
 assert.equal((await ask(`Bearer ${t.slice(0, 20)}`)).status, 401, 'a token prefix')
 assert.equal((await ask(`Bearer ${t}`)).status, 200, 'the right token reaches the app')
+
+// The gate reads the token once at startup: a missing file must not mint a new one mid-flight.
+rmSync(tokenFile)
+assert.equal((await ask(`Bearer ${t}`)).status, 200, 'the token a paired phone already holds keeps working')
+assert.equal(existsSync(tokenFile), false, 'no silent rotation behind the client')
+writeFileSync(tokenFile, t)
+
 const denied = await gate.request('/projects')
 assert.equal(denied.status, 401, 'every route is behind the token')
 assert.deepEqual(await denied.json(), { error: 'unauthorized' }, '401 is a JSON body, not text')

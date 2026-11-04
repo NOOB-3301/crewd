@@ -49,12 +49,15 @@ server.listen(SOCK, () => {
 const port = remotePort()
 let remote: ReturnType<typeof createAdaptorServer> | undefined
 if (port) {
-  awake.enable()
   token() // create it before the first request could need it
   remote = createAdaptorServer({ fetch: remoteApp().fetch })
   // A busy port must not take the socket daemon down with it.
   remote.on('error', (err) => daemonLog('remote listener error', err))
-  remote.listen(port, '127.0.0.1', () => daemonLog(`remote listening on 127.0.0.1:${port}`))
+  // Only hold the machine awake once the remote listener is actually up, as phase 3 requires.
+  remote.listen(port, '127.0.0.1', () => {
+    awake.enable()
+    daemonLog(`remote listening on 127.0.0.1:${port}`)
+  })
 }
 
 let stopping = false
