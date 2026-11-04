@@ -66,5 +66,6 @@ const push = sseBlocks()
 assert.deepEqual(push('id: 7\ndata: {"a":1}\n'), [], 'incomplete block is buffered')
 assert.deepEqual(push('\n'), [{ id: '7', data: '{"a":1}' }], 'completed by the blank line in the next chunk')
 assert.deepEqual(push(': ping\r\n\r\ndata: x\ndata: y\n\n'), [{ id: undefined, data: 'x\ny' }], 'no-data blocks skipped')
+assert.deepEqual(sseBlocks()('event: session\ndata: {"status":"idle"}\n\n'), [{ id: undefined, event: 'session', data: '{"status":"idle"}' }], 'named events for the global stream')
 
 console.log('shared.check: ok')

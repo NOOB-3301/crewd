@@ -97,7 +97,7 @@ export function foldState(lines: LogLine[], initial: SessionMeta): FoldedState {
   return { status, tokens, cost, commands, mode, modes, model, models, requests }
 }
 
-export type SseBlock = { id?: string; data: string }
+export type SseBlock = { id?: string; event?: string; data: string }
 
 /** SSE block parser: feed it text chunks, get the blocks they complete. Blocks without data (a `: ping`) are skipped. */
 export function sseBlocks(): (chunk: string) => SseBlock[] {
@@ -111,11 +111,13 @@ export function sseBlocks(): (chunk: string) => SseBlock[] {
       buf = buf.slice(end + 2)
       let data = ''
       let id: string | undefined
+      let event: string | undefined
       for (const l of block.split('\n')) {
         if (l.startsWith('data:')) data += (data ? '\n' : '') + l.slice(5).trimStart()
         else if (l.startsWith('id:')) id = l.slice(3).trim()
+        else if (l.startsWith('event:')) event = l.slice(6).trim()
       }
-      if (data) out.push({ id, data })
+      if (data) out.push(event ? { id, event, data } : { id, data })
     }
     return out
   }
