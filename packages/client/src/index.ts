@@ -8,6 +8,7 @@ import {
   routes, SOCKET_NAME,
   type CreateSessionBody, type HarnessInfo, type Usage, type ImageRef, type LogLine, type McpServer, type ModeId, type ModelList, type SessionMeta,
 } from '@crewd/protocol'
+import { sseBlocks } from '@crewd/shared'
 
 export const crewdHome = process.env.CREWD_HOME ?? join(homedir(), '.crewd')
 export const socketPath = join(crewdHome, SOCKET_NAME)
@@ -65,24 +66,13 @@ export function subscribe(id: string, onLine: (line: LogLine) => void, opts: { a
         if (!res.ok || !res.body) throw new Error(`events ${res.status}`)
         delay = 250
         const decoder = new TextDecoder()
-        let buf = ''
+        const blocks = sseBlocks()
         for await (const chunk of res.body) {
-          buf += decoder.decode(chunk, { stream: true }).replace(/\r\n/g, '\n')
-          let end: number
-          while ((end = buf.indexOf('\n\n')) >= 0) {
-            const block = buf.slice(0, end)
-            buf = buf.slice(end + 2)
-            let data = ''
-            let evId: string | undefined
-            for (const l of block.split('\n')) {
-              if (l.startsWith('data:')) data += (data ? '\n' : '') + l.slice(5).trimStart()
-              else if (l.startsWith('id:')) evId = l.slice(3).trim()
-            }
-            if (!data) continue
+          for (const { id, data } of blocks(decoder.decode(chunk, { stream: true }))) {
             const line = JSON.parse(data) as LogLine
             // Replay can overlap what history() already gave us; drop duplicates.
             if (last !== undefined && line.seq <= last) continue
-            last = evId !== undefined ? Number(evId) : line.seq
+            last = id !== undefined ? Number(id) : line.seq
             onLine(line)
           }
         }

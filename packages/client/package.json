@@ -4,6 +4,7 @@
   "type": "module",
   "exports": { ".": "./src/index.ts" },
   "dependencies": {
-    "@crewd/protocol": "workspace:*"
+    "@crewd/protocol": "workspace:*",
+    "@crewd/shared": "workspace:*"
   }
 }

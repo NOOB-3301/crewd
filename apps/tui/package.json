@@ -11,6 +11,7 @@
   "dependencies": {
     "@crewd/client": "workspace:*",
     "@crewd/protocol": "workspace:*",
+    "@crewd/shared": "workspace:*",
     "@opentui/core": "0.8.1",
     "@opentui/react": "0.8.1",
     "react": "^19.3.1"
