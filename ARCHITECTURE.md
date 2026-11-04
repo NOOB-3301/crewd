@@ -1,13 +1,13 @@
 # Architecture
 
-crewd is split into a long-lived daemon that owns agent processes and session state, and a terminal client that renders and controls those sessions. The two communicate over a Unix domain socket using ordinary HTTP plus Server-Sent Events (SSE). Both sides share types and route names from `@crewd/protocol`.
+crewd is split into a long-lived daemon that owns agent processes and session state, and a terminal client that renders and controls those sessions. The two communicate over a Unix domain socket using ordinary HTTP plus Server-Sent Events (SSE). Both sides share types and route names from `@crewd/protocol`. An optional Android app (`apps/mobile`) reaches the same routes over HTTPS through a loopback-only listener.
 
 ## Design principles
 
 1. **The daemon owns everything that outlives a screen.** Agent processes, session metadata, event logs, permission requests, and MCP configuration live in the daemon. Closing a tile or the TUI does not kill an agent.
 2. **One event vocabulary.** Each orchestrator translates its vendor's messages into the same `Ev` union (`text`, `thinking`, `tool`, `turn_end`, `status`, `permission_request`, `mode`, `model`, …). Unknown messages become `raw` so nothing is silently dropped.
 3. **Log first, stream second.** Every event is appended to `log.jsonl` before it is broadcast. Clients can reconnect and replay from any sequence number.
-4. **Local only.** The daemon binds a Unix socket with mode `0600`; there is no TCP listener and no authentication layer.
+4. **Local by default.** The daemon binds a Unix socket with mode `0600` and no authentication layer. Remote access is opt-in: `~/.crewd/remote.json` (`{ "port": n }`, read at startup) adds a second listener bound to `127.0.0.1` only, guarded by one static bearer token in `~/.crewd/remote-token` (mode `0600`). That token plus tailnet membership is the whole trust boundary; the phone sees the same routes, the same error shapes, and the same permissions as the socket.
 5. **Thin UI.** The TUI holds only view state and preferences. Session status, modes, models, commands, and permission queues are derived from the daemon's log.
 
 ## High-level diagram
@@ -105,12 +105,16 @@ ASCII version, for terminals without Mermaid rendering:
 | Path | Responsibility |
 | --- | --- |
 | `packages/protocol` | Shared contract: `Harness`, `SessionMeta`, `Ev`, `LogLine`, `Usage`, capability and permission types, `routes`, `SOCKET_NAME`. No runtime logic. |
-| `packages/client` | Typed daemon client: HTTP calls over the socket, SSE subscription with backoff and sequence dedupe, `ensureDaemon()` auto-start. |
-| `apps/daemon` | Node process, bundled by Bun to `dist/main.js`. Hono server, session manager, orchestrators, log store, MCP and usage modules. |
+| `packages/shared` | Log and stream helpers with no Node, Bun or React imports: `toBlocks`, `foldState`, `claudeModes`, `sseBlocks`, and the `Item` / `Block` / `ToolItem` types. `main` and `types` point at `src/index.ts`, so Bun, the daemon bundle and Metro can all consume the source. |
+| `packages/client` | Typed daemon client: HTTP calls over the socket, SSE subscription with backoff and sequence dedupe, `ensureDaemon()` auto-start. Uses Bun's `unix` fetch, so the phone app speaks plain HTTPS against the same routes instead. |
+| `apps/daemon` | Node process, bundled by Bun to `dist/main.js`. Hono server, session manager, orchestrators, log store, MCP and usage modules, optional remote listener. |
 | `apps/tui` | Bun-based OpenTUI/React terminal application. Screens, log folding, input, tiles, palettes, preferences. |
+| `apps/mobile` | Expo/React Native app, Android only. HTTP + SSE client of the daemon's routes over the remote listener; server address and token live in `expo-secure-store`. |
 | `fixtures/claude` | Sample Claude transcript JSONL files. |
 
 At runtime there is one daemon per socket. It is started either by `bun run daemon` or by the TUI's `ensureDaemon()`, which builds `apps/daemon/dist/main.js` if missing, spawns `node dist/main.js` detached, and waits up to about five seconds for `GET /harnesses` to answer. Startup probes the socket with a connect: a connectable socket means another daemon already owns it. The socket is created under `umask 077` and then explicitly `chmod`ed to `0600`.
+
+One React version: `apps/mobile` installs what Expo SDK 58 pins (`react@19.3.0`) and `apps/tui` declares that exact version rather than a range, because two React copies in one workspace break hooks under Metro. `@opentui/react` accepts `>=19.2.0`, so the TUI and the app use the same copy and `apps/mobile` stays inside the root `workspaces` glob; no Metro `watchFolders` fallback was needed.
 
 ## Components
 
@@ -118,8 +122,10 @@ At runtime there is one daemon per socket. It is started either by `bun run daem
 
 | Module | Responsibility |
 | --- | --- |
-| `src/main.ts` | Socket path validation (macOS 104-byte limit), singleton check, session recovery, signal handling, graceful shutdown. |
-| `src/server.ts` | Hono routes, request validation, SSE endpoint, error mapping (`HttpError` → 4xx, everything else → 500). |
+| `src/main.ts` | Socket path validation (macOS 104-byte limit), singleton check, session recovery, optional `127.0.0.1` remote listener, signal handling, graceful shutdown. |
+| `src/server.ts` | Hono routes, request validation, the two SSE endpoints (both write a `: ping` comment every 15s), error mapping (`HttpError` → 4xx, everything else → 500). |
+| `src/remote.ts` | The remote listener's front: reads `remote.json` for the port, creates and reuses `remote-token` (`0600`), checks `Authorization: Bearer` by SHA-256 + `timingSafeEqual`, and forwards allowed requests to the existing `app` unchanged. Denials log the path only. No CORS, no Host check. |
+| `src/awake.ts` | Holds `caffeinate -i -w <daemon pid>` while at least one session is busy, so a turn is not lost to idle sleep. macOS only, and only when remote is enabled. |
 | `src/sessions.ts` | In-memory `live` map keyed by crewd session id. Creates entries, writes metadata, appends events, fans out to subscribers, tracks status and open permission requests, enforces a 15-minute idle stop, and recovers interrupted sessions at boot. |
 | `src/registry.ts` | Built-in harness catalog plus `~/.crewd/harnesses.json`. Determines installation by checking the binary on `PATH`, maps harness → orchestrator class, and constructs instances. |
 | `src/models.ts` | Model-list cache keyed by harness + cwd with a 10-minute TTL; concurrent callers share one probe. Live sessions can refresh the cached list. |
@@ -248,7 +254,7 @@ type LogLine = { seq: number; ts: number } & (
 
 ## HTTP API
 
-All routes are defined in `packages/protocol/src/index.ts` and served by `apps/daemon/src/server.ts`.
+All routes are defined in `packages/protocol/src/index.ts` and served by `apps/daemon/src/server.ts`. The remote listener serves the same list, so a phone and the TUI see one API and one error shape.
 
 | Method and path | Purpose |
 | --- | --- |
@@ -257,8 +263,10 @@ All routes are defined in `packages/protocol/src/index.ts` and served by `apps/d
 | `GET /harnesses/:id/models?cwd=&refresh=1` | Model list for a project; cached for 10 minutes unless refreshed. |
 | `POST /sessions` | Create (or resume) a session: `{ harness, cwd, resumeId?, mcp?, permissionMode?, model? }`. |
 | `GET /sessions` | Crewd's own sessions, live and past, newest first. |
-| `GET /sessions/:id/history?harness=` | Crewd log when the id is ours; otherwise ask one or all harnesses for native history. |
+| `GET /projects` | Folders crewd has sessions in, as `{ cwd, lastUsed, harnesses }`, newest first, capped at 50. Deleted and throwaway folders drop out (the same rule the TUI applies client-side), so a phone can choose a `cwd` without browsing the disk. |
+| `GET /sessions/:id/history?harness=&turns=N` | Crewd log when the id is ours; otherwise ask one or all harnesses for native history. `turns=N` returns only the last N turns, cut at a user line. |
 | `GET /sessions/:id/events` | SSE stream with backlog replay (`Last-Event-ID` / `?after=`). |
+| `GET /events` | Global SSE stream of the session list: one `snapshot` event holding every `SessionMeta` on connect, then a `session` event per metadata change. No ids and no replay, so a reconnect just takes a fresh snapshot. |
 | `POST /sessions/:id/messages` | Send `{ text, images? }`. Images are absolute paths read and encoded by the daemon. |
 | `POST /sessions/:id/permissions/:requestId` | Answer an open prompt with `{ optionId }`. |
 | `POST /sessions/:id/mode` | Switch mode with `{ mode }`. |
@@ -298,5 +306,5 @@ The TUI keeps only preferences and view state on disk (`tui.json`, `wall.json`) 
 - **Synchronous log IO** — chosen so appends are ordered without locks. `log.read` parses the whole file on each call (marked `shortcut:` in the source); offset indexing would be the next step for very large logs.
 - **TUI log refolding** — `useSession` folds the full log on every new line (also marked `shortcut:`). This is fine for normal chat-sized sessions.
 - **Qoder SDK surface** — its integration was written against documentation and is marked with `shortcut:` comments; the SDK is an optional runtime dependency loaded through a variable specifier.
-- **Local security model** — the daemon trusts any process that can open the user's socket. Permission bypass mode exists and is gated by a TUI confirmation, but there is no separate authorization layer.
+- **Security model** — the daemon trusts any process that can open the user's socket. Permission bypass mode exists and is gated by a TUI confirmation, but there is no separate authorization layer. Remote access is no stricter: one static bearer token in front of a `127.0.0.1`-only listener, with tailnet membership as the outer boundary, and nothing restricted remotely that the socket already allows — a token holder controls the Mac through its agents. CORS and Host checks stay out by design; a browser page cannot send the bearer header cross-origin without a preflight the daemon never answers.
 - **ACP scope** — `fs/*` and `terminal/*` client capabilities are not advertised; ACP `fork` is unstable in v1 and treated as optional.

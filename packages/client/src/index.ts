@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   routes, SOCKET_NAME,
-  type CreateSessionBody, type HarnessInfo, type Usage, type ImageRef, type LogLine, type McpServer, type ModeId, type ModelList, type SessionMeta,
+  type CreateSessionBody, type HarnessInfo, type Usage, type ImageRef, type LogLine, type McpServer, type ModeId, type ModelList, type ProjectInfo, type SessionMeta,
 } from '@crewd/protocol'
 import { sseBlocks } from '@crewd/shared'
 
@@ -35,6 +35,8 @@ export const harnessModels = (id: string, cwd?: string, refresh = false) =>
 export const createSession = (body: CreateSessionBody) => post<SessionMeta>(routes.sessions, body)
 /** Sessions the daemon is running or has run (source 'crewd'), newest first. Daemon: GET routes.sessions. */
 export const liveSessions = () => call<SessionMeta[]>(routes.sessions)
+/** Folders crewd has sessions in, newest first; for a new-session picker that cannot browse the machine's disk. */
+export const projects = () => call<ProjectInfo[]>(routes.projects)
 export const history = (id: string) => call<LogLine[]>(routes.history(id))
 export const send = (id: string, text: string, images?: ImageRef[]) =>
   post<unknown>(routes.messages(id), images?.length ? { text, images } : { text })
