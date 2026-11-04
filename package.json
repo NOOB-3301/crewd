@@ -7,7 +7,7 @@
     "build": "bun run --filter '@crewd/daemon' build",
     "daemon": "bun run --filter '@crewd/daemon' start",
     "tui": "bun apps/tui/src/main.tsx",
-    "typecheck": "tsc -p apps/daemon --noEmit && tsc -p apps/tui --noEmit"
+    "typecheck": "tsc -p apps/daemon --noEmit && tsc -p apps/tui --noEmit && tsc -p apps/mobile --noEmit"
   },
   "devDependencies": {
     "typescript": "^7.0.2"
