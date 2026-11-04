@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync, statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import type { CreateSessionBody, Harness, ImageRef, LogLine, ModeId, SessionMeta, SessionStatus } from '@crewd/protocol'
+import * as awake from './awake.ts'
 import * as log from './log.ts'
 import { mcpFor } from './mcp.ts'
 import * as models from './models.ts'
@@ -31,6 +32,17 @@ type Entry = {
 }
 const live = new Map<string, Entry>()
 
+// Metadata only, for the global /events stream. Deliberately not fed by emit(), which runs per text chunk.
+const metaSubs = new Set<(m: SessionMeta) => void>()
+export function subscribeMeta(fn: (m: SessionMeta) => void) {
+  return () => void metaSubs.delete(fn)
+}
+
+function writeMeta(meta: SessionMeta) {
+  log.writeMeta(meta)
+  for (const fn of metaSubs) fn(meta)
+}
+
 function entry(id: string): Entry {
   let e = live.get(id)
   if (!e) {
@@ -56,9 +68,11 @@ const busy = (s: SessionStatus) => s === 'running' || s === 'waiting'
 
 function setStatus(e: Entry, state: SessionStatus) {
   if (e.meta.status === state) return
+  const was = busy(e.meta.status)
   e.meta.status = state
-  log.writeMeta(e.meta)
+  writeMeta(e.meta)
   emit(e, { kind: 'event', ev: { type: 'status', state } })
+  if (was !== busy(state)) awake.note(busy(state) ? 1 : -1)
 }
 
 function resetIdle(e: Entry) {
@@ -122,7 +136,7 @@ async function pump(e: Entry, o: Orchestrator) {
     for await (const ev of o.events()) {
       if (o.nativeId && o.nativeId !== e.meta.nativeId) {
         e.meta.nativeId = o.nativeId
-        log.writeMeta(e.meta)
+        writeMeta(e.meta)
       }
       // Orchestrators only end turns; interrupted/dead are set by crewd and stay put.
       if (ev.type === 'status') {
@@ -131,12 +145,12 @@ async function pump(e: Entry, o: Orchestrator) {
       }
       if (ev.type === 'mode' && ev.mode !== e.meta.permissionMode) {
         e.meta.permissionMode = ev.mode
-        log.writeMeta(e.meta)
+        writeMeta(e.meta)
       }
       if (ev.type === 'model') {
         if (ev.model !== undefined && ev.model !== e.meta.model) {
           e.meta.model = ev.model
-          log.writeMeta(e.meta)
+          writeMeta(e.meta)
         }
         const h = registry.get(e.meta.harness)
         if (h) models.remember(h, e.meta.cwd, ev.available)
@@ -183,7 +197,7 @@ export async function create(body: CreateSessionBody): Promise<SessionMeta> {
   }
   const e: Entry = { meta, subs: new Set(), pending: new Map() }
   live.set(meta.id, e)
-  log.writeMeta(meta)
+  writeMeta(meta)
 
   // Copy the native transcript in once, so history and SSE replay show it without
   // duplicating the turns crewd later adds to the same native session.
@@ -192,7 +206,7 @@ export async function create(body: CreateSessionBody): Promise<SessionMeta> {
     for (const l of past) emit(e, { kind: 'event', ev: l.kind === 'user' ? { type: 'user', text: l.text } : l.ev })
     const first = past.find((l) => l.kind === 'user')
     if (first?.kind === 'user') meta.title = first.text.slice(0, TITLE_MAX)
-    log.writeMeta(meta)
+    writeMeta(meta)
   }
 
   startOrch(e, h)
@@ -223,7 +237,7 @@ export async function send(id: string, text: string, imageRefs?: unknown): Promi
 
   emit(e, { kind: 'user', text })
   e.meta.title ??= text.slice(0, TITLE_MAX)
-  log.writeMeta(e.meta)
+  writeMeta(e.meta)
   setStatus(e, 'running')
 
   if (!e.orch) startOrch(e, h)

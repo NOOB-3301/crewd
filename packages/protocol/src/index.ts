@@ -118,6 +118,9 @@ export type PermissionAnswerBody = { optionId: string }
 export type ModeBody = { mode: ModeId }
 export type ModelBody = { model: string }
 
+/** GET /projects: a folder crewd has sessions in, newest activity first. */
+export type ProjectInfo = { cwd: string; lastUsed: number; harnesses: string[] }
+
 export const SOCKET_NAME = 'crewd.sock'
 
 export const routes = {
@@ -130,6 +133,9 @@ export const routes = {
   messages: (id: string) => `/sessions/${encodeURIComponent(id)}/messages`,
   interrupt: (id: string) => `/sessions/${encodeURIComponent(id)}/interrupt`,
   events: (id: string) => `/sessions/${encodeURIComponent(id)}/events`,
+  /** GET /events: global session-list stream (snapshot then one message per metadata change). */
+  allEvents: '/events',
+  projects: '/projects',
   permission: (id: string, requestId: string) => `/sessions/${encodeURIComponent(id)}/permissions/${encodeURIComponent(requestId)}`,
   mode: (id: string) => `/sessions/${encodeURIComponent(id)}/mode`,
   model: (id: string) => `/sessions/${encodeURIComponent(id)}/model`,

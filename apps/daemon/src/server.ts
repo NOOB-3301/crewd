@@ -1,7 +1,7 @@
 import { statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute } from 'node:path'
-import type { HarnessInfo, LogLine } from '@crewd/protocol'
+import type { HarnessInfo, LogLine, ProjectInfo } from '@crewd/protocol'
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import * as log from './log.ts'
@@ -24,6 +24,20 @@ function harness(id: string) {
   const h = registry.get(id)
   if (!h) throw new HttpError(404, `unknown harness ${id}`)
   return h
+}
+
+/** SSE comment every 15s: carriers and mobile proxies cut a quiet connection. Clients skip blocks without data. */
+function keepalive(stream: { write(chunk: string): Promise<unknown> }) {
+  const t = setInterval(() => void stream.write(': ping\n\n'), 15_000)
+  return () => clearInterval(t)
+}
+
+/** Cut at the Nth-from-last user line: turn boundaries keep toBlocks correct, and an open prompt is always in the last turn. */
+function tailTurns(lines: LogLine[], turns: number) {
+  const isUser = (l: LogLine) => l.kind === 'user' || (l.kind === 'event' && l.ev.type === 'user')
+  let seen = 0
+  const start = lines.findLastIndex((l) => isUser(l) && ++seen >= turns)
+  return start < 0 ? lines : lines.slice(start)
 }
 
 app.get('/harnesses', async (c) => {
@@ -59,7 +73,9 @@ app.get('/sessions', (c) => c.json(sessions.listOurs()))
 
 app.get('/sessions/:id/history', async (c) => {
   const id = c.req.param('id')
-  if (sessions.get(id)) return c.json(log.read(id))
+  const turns = Number(c.req.query('turns'))
+  const cut = (lines: LogLine[]) => (turns > 0 ? tailTurns(lines, turns) : lines)
+  if (sessions.get(id)) return c.json(cut(log.read(id)))
   // Native-only id: ask the named harness, else every harness until one knows it.
   const name = c.req.query('harness')
   for (const h of name ? [harness(name)] : registry.harnesses()) {
@@ -67,10 +83,55 @@ app.get('/sessions/:id/history', async (c) => {
       .classFor(h)
       .loadHistory(h, id)
       .catch(() => [])
-    if (lines.length) return c.json(lines)
+    if (lines.length) return c.json(cut(lines))
   }
   throw new HttpError(404, `no session ${id}`)
 })
+
+/**
+ * GET /projects: folders crewd has sessions in, for the phone's new-session picker.
+ * The phone cannot browse the Mac's disk. crewd's own sessions only in this version.
+ */
+app.get('/projects', (c) => {
+  // Throwaway scratch folders are noise; apps/tui/src/allSessions.ts keeps the matching client-side rule.
+  const tmp = ['/tmp/', '/private/tmp/', '/private/var/folders/', '/var/folders/', `${log.HOME}/tmp/`]
+  const map = new Map<string, ProjectInfo>()
+  for (const s of sessions.listOurs()) {
+    if (tmp.some((p) => (s.cwd + '/').startsWith(p))) continue
+    const found = map.get(s.cwd)
+    if (found) {
+      if (!found.harnesses.includes(s.harness)) found.harnesses.push(s.harness)
+    } else {
+      map.set(s.cwd, { cwd: s.cwd, lastUsed: s.updatedAt ?? s.createdAt, harnesses: [s.harness] })
+    }
+  }
+  return c.json(
+    [...map.values()]
+      .filter((p) => statSync(p.cwd, { throwIfNoEntry: false })?.isDirectory())
+      .sort((a, b) => b.lastUsed - a.lastUsed)
+      .slice(0, 50),
+  )
+})
+
+/**
+ * GET /events: the session list as a push stream. One snapshot on connect, then a message
+ * per metadata change. No ids and no replay, so reconnecting just takes a fresh snapshot.
+ */
+app.get('/events', (c) =>
+  streamSSE(c, async (stream) => {
+    const q = new AsyncQueue<{ event: string; data: string }>()
+    q.push({ event: 'snapshot', data: JSON.stringify(sessions.listOurs()) })
+    const unsubscribe = sessions.subscribeMeta((m) => q.push({ event: 'session', data: JSON.stringify(m) }))
+    const stop = keepalive(stream)
+    stream.onAbort(() => q.close())
+    try {
+      for await (const m of q) await stream.writeSSE(m)
+    } finally {
+      stop()
+      unsubscribe()
+    }
+  }),
+)
 
 app.post('/sessions/:id/messages', async (c) => {
   const { text, images } = await body(c)
@@ -99,11 +160,14 @@ app.get('/sessions/:id/events', (c) => {
     const q = new AsyncQueue<LogLine>()
     for (const l of log.read(id, after)) q.push(l)
     const unsubscribe = sessions.subscribe(id, (l) => q.push(l))
-    stream.onAbort(() => {
+    const stop = keepalive(stream)
+    stream.onAbort(() => q.close())
+    try {
+      for await (const l of q) await stream.writeSSE({ id: String(l.seq), data: JSON.stringify(l) })
+    } finally {
+      stop()
       unsubscribe()
-      q.close()
-    })
-    for await (const l of q) await stream.writeSSE({ id: String(l.seq), data: JSON.stringify(l) })
+    }
   })
 })
 
