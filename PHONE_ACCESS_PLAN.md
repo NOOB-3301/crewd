@@ -13,7 +13,7 @@ The daemon runs on a Mac at home. From a phone, away from home, the user can:
 
 | Topic | Decision |
 | --- | --- |
-| Reach the daemon | Tailscale (`tailscale serve`), tailnet-private. Not public. |
+| Reach the daemon | Tailscale (`tailscale serve`), tailnet-private. Not public. ngrok is allowed for short-lived testing only (see Phase 3b). |
 | Transport | Plain HTTP + SSE for streaming, ordinary POSTs for actions. No WebSocket. |
 | Auth | One static bearer token, stored in `~/.crewd/remote-token` (mode `0600`). No rotation, pairing, or per-device tracking. |
 | Enable switch | `~/.crewd/remote.json`. If the file is absent, remote is off. |
@@ -106,6 +106,56 @@ TUI ── Unix socket (unchanged, no auth) ─┘
 - Start a long-running session and confirm the Mac does not idle-sleep while it runs, and may sleep after it finishes.
 - The port is not reachable from a device outside the tailnet.
 
+## Phase 3b: Testing with ngrok (temporary alternative to Tailscale)
+
+**Audience note:** this section is written as explicit, ordered instructions so a human or an AI agent can follow it without guessing.
+
+**Purpose:** let a developer test the remote listener and the phone app without setting up Tailscale. ngrok is for testing only. Tailscale remains the intended way to use the feature day to day.
+
+**Scope of change:** none to the code. The daemon listener, the token, the heartbeat, the PWA and `caffeinate` behave the same. Only the command that exposes the port differs. Skip the "Tailscale setup" steps of Phase 3 and use the steps below instead.
+
+### Prerequisites
+
+- Phase 1 is done: `~/.crewd/remote.json` exists with `{ "port": <number> }`, the daemon is running, and `curl -H "Authorization: Bearer $(cat ~/.crewd/remote-token)" http://127.0.0.1:<port>/sessions` returns 200.
+- ngrok is installed on the Mac and signed in (`ngrok config add-authtoken <token>`).
+
+### Steps
+
+1. Choose the port from `~/.crewd/remote.json`. Call it `<port>`.
+2. Run `ngrok http <port>`. Do not pass `--basic-auth`: it uses the `Authorization` header, which crewd already uses for the bearer token, so the two would collide.
+3. Copy the `https://….ngrok-free.app` forwarding URL that ngrok prints. Call it `<url>`.
+4. Verify auth from any machine:
+   - `curl -i <url>/sessions` must return `401`.
+   - `curl -i -H "Authorization: Bearer <token>" <url>/sessions` must return `200` with a JSON array.
+5. Verify streaming (needs a session id from step 4):
+   - `curl -N -H "Authorization: Bearer <token>" <url>/sessions/<id>/events`
+   - On an idle session a `: ping` line must appear about every 15 seconds, and the connection must stay open.
+6. Open `<url>/app/` on the phone. If ngrok shows a warning page, click through it once.
+7. Paste the token on the phone's token screen, then run the Phase 5 checks.
+8. When testing ends, stop ngrok (Ctrl+C in its terminal). The public URL stops working immediately.
+
+### Expected results and what to do if they fail
+
+| Check | Expected | If it fails |
+| --- | --- | --- |
+| No token returns 401 | `401` | The auth middleware is not applied to the remote app. Fix Phase 1 before continuing. |
+| Token returns 200 | `200` | Check that the token in the header matches `~/.crewd/remote-token` exactly, with no trailing newline or quotes. |
+| SSE stays open | `: ping` about every 15s | If the stream stalls, ngrok may be buffering. Confirm the heartbeat is implemented. If it still stalls, record it as an ngrok-specific limitation and test again with Tailscale. |
+| PWA `fetch` calls fail with an HTML warning page | JSON responses | ngrok's free tier can show an interstitial to browsers. Add the request header `ngrok-skip-browser-warning: 1` in `apps/web/src/api.ts`. |
+| PWA loads but every call returns 401 | Calls succeed | The token screen did not store the token, or `localStorage` is blocked. Clear site data and paste the token again. |
+
+### Constraints (do not skip)
+
+- The ngrok URL is public on the internet. The bearer token is the only protection. Keep the tunnel running only while testing.
+- Never put the token in a URL or query string, and never paste it into logs, screenshots or chat.
+- Do not leave the ngrok tunnel running overnight or unattended.
+- Do not enable any CORS headers to "make it work". The same-origin PWA does not need them.
+- Free ngrok URLs may change each run. Use the URL printed by the current ngrok session.
+
+### Switching back to Tailscale
+
+Stop ngrok and follow the Tailscale steps in Phase 3. No code or config change is needed, because both options proxy to `127.0.0.1:<port>`.
+
 ## Phase 4: Extract shared code
 
 **Goal:** the TUI and phone fold logs with the same code.
@@ -165,6 +215,7 @@ This touches working code, so it should be its own commit.
 | 1 Listener and auth | None |
 | 2 Streaming hardening | 1 |
 | 3 Tailscale and sleep prevention | 1 |
+| 3b ngrok testing (optional, replaces the Tailscale setup while testing) | 1, 2 |
 | 4 Shared code extraction | None (can run in parallel with 1–3) |
 | 5 Web app | 2, 4 |
 | 6 Docs | All |
