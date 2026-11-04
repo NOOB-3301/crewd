@@ -35,6 +35,7 @@ const live = new Map<string, Entry>()
 // Metadata only, for the global /events stream. Deliberately not fed by emit(), which runs per text chunk.
 const metaSubs = new Set<(m: SessionMeta) => void>()
 export function subscribeMeta(fn: (m: SessionMeta) => void) {
+  metaSubs.add(fn)
   return () => void metaSubs.delete(fn)
 }
 
