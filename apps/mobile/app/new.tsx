@@ -129,7 +129,7 @@ export default function NewSession() {
       {!!err && <Text style={styles.err}>{err}</Text>}
 
       <ScrollView
-        contentContainerStyle={styles.body}
+        contentContainerStyle={[styles.body, { paddingBottom: Math.max(insets.bottom + 16, 32) }]}
         keyboardShouldPersistTaps="handled"
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={c.muted} />}
       >
