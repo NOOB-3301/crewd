@@ -1,9 +1,5 @@
+import type { ToolItem } from '@crewd/shared'
 import { pad, theme } from './theme.ts'
-
-export type ToolItem = {
-  k: 'tool'; id: string; name: string; status: 'start' | 'end' | 'error'
-  input?: unknown; output?: unknown; startTs: number; endTs?: number
-}
 
 const argKeys = ['file_path', 'path', 'command', 'pattern', 'url', 'query', 'description', 'prompt']
 

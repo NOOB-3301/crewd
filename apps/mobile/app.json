@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "crewd",
+    "slug": "crewd",
+    "version": "1.0.0",
+    "scheme": "crewd",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "android": {
+      "package": "app.crewd.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#101014",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "c23f4913-1039-428a-be87-b44a3765e9cb"
+      }
+    },
+    "owner": "arkab629"
+  }
+}

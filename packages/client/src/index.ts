@@ -6,8 +6,9 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   routes, SOCKET_NAME,
-  type CreateSessionBody, type HarnessInfo, type Usage, type ImageRef, type LogLine, type McpServer, type ModeId, type ModelList, type SessionMeta,
+  type CreateSessionBody, type HarnessInfo, type Usage, type ImageRef, type LogLine, type McpServer, type ModeId, type ModelList, type ProjectInfo, type SessionMeta,
 } from '@crewd/protocol'
+import { sseBlocks } from '@crewd/shared'
 
 export const crewdHome = process.env.CREWD_HOME ?? join(homedir(), '.crewd')
 export const socketPath = join(crewdHome, SOCKET_NAME)
@@ -34,6 +35,8 @@ export const harnessModels = (id: string, cwd?: string, refresh = false) =>
 export const createSession = (body: CreateSessionBody) => post<SessionMeta>(routes.sessions, body)
 /** Sessions the daemon is running or has run (source 'crewd'), newest first. Daemon: GET routes.sessions. */
 export const liveSessions = () => call<SessionMeta[]>(routes.sessions)
+/** Folders crewd has sessions in, newest first; for a new-session picker that cannot browse the machine's disk. */
+export const projects = () => call<ProjectInfo[]>(routes.projects)
 export const history = (id: string) => call<LogLine[]>(routes.history(id))
 export const send = (id: string, text: string, images?: ImageRef[]) =>
   post<unknown>(routes.messages(id), images?.length ? { text, images } : { text })
@@ -65,24 +68,13 @@ export function subscribe(id: string, onLine: (line: LogLine) => void, opts: { a
         if (!res.ok || !res.body) throw new Error(`events ${res.status}`)
         delay = 250
         const decoder = new TextDecoder()
-        let buf = ''
+        const blocks = sseBlocks()
         for await (const chunk of res.body) {
-          buf += decoder.decode(chunk, { stream: true }).replace(/\r\n/g, '\n')
-          let end: number
-          while ((end = buf.indexOf('\n\n')) >= 0) {
-            const block = buf.slice(0, end)
-            buf = buf.slice(end + 2)
-            let data = ''
-            let evId: string | undefined
-            for (const l of block.split('\n')) {
-              if (l.startsWith('data:')) data += (data ? '\n' : '') + l.slice(5).trimStart()
-              else if (l.startsWith('id:')) evId = l.slice(3).trim()
-            }
-            if (!data) continue
+          for (const { id, data } of blocks(decoder.decode(chunk, { stream: true }))) {
             const line = JSON.parse(data) as LogLine
             // Replay can overlap what history() already gave us; drop duplicates.
             if (last !== undefined && line.seq <= last) continue
-            last = evId !== undefined ? Number(evId) : line.seq
+            last = id !== undefined ? Number(id) : line.seq
             onLine(line)
           }
         }

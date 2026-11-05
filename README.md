@@ -80,6 +80,8 @@ Set `CREWD_HOME` to relocate everything. Default layout:
 ├── daemon.log          # daemon diagnostics
 ├── harnesses.json      # extra ACP harnesses
 ├── mcp.json            # [{ name, command, args?, env?, enabled? }]
+├── remote.json         # { "port": n } — adds the loopback remote listener; no file means no listener
+├── remote-token        # bearer token for it, created on the first remote start (mode 0600)
 ├── sessions/
 │   └── <id>/
 │       ├── meta.json   # SessionMeta
@@ -90,6 +92,54 @@ Set `CREWD_HOME` to relocate everything. Default layout:
 ```
 
 MCP servers are enabled by default and passed to sessions at creation. A session can be created with a subset; the MCP screen (`m`) manages the list and toggles servers.
+
+## Phone access
+
+`apps/mobile` is an Expo (React Native) app for Android. It reaches the daemon over HTTPS through a second listener bound to `127.0.0.1` only, which Tailscale exposes from outside. The socket and the TUI keep working as before.
+
+Turn the listener on by writing the port, then restart the daemon — `remote.json` is read at startup:
+
+```sh
+echo '{ "port": 8787 }' > ~/.crewd/remote.json
+```
+
+The daemon creates the token on the first remote start and reuses it after. It is in `~/.crewd/remote-token` (mode `0600`):
+
+```sh
+cat ~/.crewd/remote-token
+```
+
+Every remote call needs `Authorization: Bearer <token>`; without it the daemon answers `401`. The token grants what the socket grants — sessions in any folder, MCP edits, bypass-permissions mode — so keep the token and the tailnet to yourself.
+
+Install Tailscale on the Mac and the phone, signed in to the same tailnet, enable MagicDNS and HTTPS certificates in the admin console, then on the Mac:
+
+```sh
+tailscale serve --bg 8787   # flags vary by version, check `tailscale serve --help`
+```
+
+You get `https://<mac>.<tailnet>.ts.net`. HTTPS is required, not preferred: Android blocks plain-HTTP requests from apps. Use `serve`, never `funnel`, which is public.
+
+While a session is `running` or `waiting` the daemon holds `caffeinate -i`, so the Mac does not idle-sleep mid-turn. Closing the lid still sleeps it — use an external display on power (clamshell mode) or a tool like Amphetamine.
+
+### Install the app
+
+Give `apps/mobile/eas.json` a `preview` profile that outputs an APK:
+
+```json
+{ "build": { "preview": { "android": { "buildType": "apk" } } } }
+```
+
+```sh
+cd apps/mobile && bunx eas-cli build --platform android --profile preview
+```
+
+Needs a free Expo account; the free tier has a monthly build quota and may queue, and EAS manages the signing key. Download the APK from the link the build prints, get it onto the phone (`adb install <file>.apk` or any file transfer) and open it — installing from a browser or file manager asks you to allow "Install unknown apps" for that app first. Rebuilds must be signed with the same key as the installed version or Android refuses the update; a local build means keeping your own keystore.
+
+### Connect
+
+On the Connect screen enter the server address (`https://<mac>.<tailnet>.ts.net`, it must start with `https://`) and the token. "Test connection" calls `GET /harnesses`. Both are saved in `expo-secure-store`.
+
+To test without Tailscale, run `ngrok http 8787` and use its public URL as the server address. Do not pass `--basic-auth`: it uses the `Authorization` header the bearer token already uses. The tunnel is public with only the token in front of it, so stop it (Ctrl+C) when you are done and never leave it running unattended. ngrok also holds back small, infrequent SSE writes, so a status change can take seconds to reach the phone over it even though the connection looks alive; the app polls on a slow timer as a backstop, and Tailscale delivers pushes promptly.
 
 ## Keys
 
@@ -118,9 +168,11 @@ Press `?` anywhere for the full list.
 ```
 apps/
   daemon/     # Node + Hono API on a Unix socket; owns agents and logs
+  mobile/     # Expo + React Native app for Android, used over the remote listener
   tui/        # OpenTUI + React terminal client
 packages/
   protocol/   # shared types, event vocabulary, route table
+  shared/     # log folding and SSE parsing; no Node, Bun or React APIs
   client/     # typed HTTP + SSE client, daemon auto-start
 fixtures/
   claude/     # sample Claude transcript JSONL files

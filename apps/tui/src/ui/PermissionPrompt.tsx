@@ -1,5 +1,5 @@
 import type { PermissionOption } from '@crewd/protocol'
-import type { Pending } from '../useSession.ts'
+import type { Pending } from '@crewd/shared'
 import { mainArg } from './ToolLine.tsx'
 import { theme } from './theme.ts'
 

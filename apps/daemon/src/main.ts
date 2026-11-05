@@ -5,7 +5,9 @@ import { createAdaptorServer } from '@hono/node-server'
 import { SOCKET_NAME } from '@crewd/protocol'
 import { HOME, SESSIONS_DIR, daemonLog } from './log.ts'
 import { app } from './server.ts'
+import * as awake from './awake.ts'
 import * as sessions from './sessions.ts'
+import { remoteApp, remotePort, token } from './remote.ts'
 
 const SOCK = join(HOME, SOCKET_NAME)
 // macOS caps unix socket paths at 104 bytes and Node silently truncates longer ones.
@@ -43,6 +45,21 @@ server.listen(SOCK, () => {
   daemonLog(`listening on ${SOCK} (pid ${process.pid})`)
 })
 
+// Loopback only; Tailscale (or a test tunnel) is the only way in from outside.
+const port = remotePort()
+let remote: ReturnType<typeof createAdaptorServer> | undefined
+if (port) {
+  token() // create it before the first request could need it
+  remote = createAdaptorServer({ fetch: remoteApp().fetch })
+  // A busy port must not take the socket daemon down with it.
+  remote.on('error', (err) => daemonLog('remote listener error', err))
+  // Only hold the machine awake once the remote listener is actually up, as phase 3 requires.
+  remote.listen(port, '127.0.0.1', () => {
+    awake.enable()
+    daemonLog(`remote listening on 127.0.0.1:${port}`)
+  })
+}
+
 let stopping = false
 async function shutdown(signal: string) {
   if (stopping) return
@@ -51,6 +68,8 @@ async function shutdown(signal: string) {
   await Promise.race([sessions.closeAll(), new Promise((r) => setTimeout(r, 5000))])
   ;(server as { closeAllConnections?: () => void }).closeAllConnections?.()
   server.close()
+  ;(remote as { closeAllConnections?: () => void } | undefined)?.closeAllConnections?.()
+  remote?.close()
   try {
     unlinkSync(SOCK)
   } catch {}
