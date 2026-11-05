@@ -139,7 +139,7 @@ Needs a free Expo account; the free tier has a monthly build quota and may queue
 
 On the Connect screen enter the server address (`https://<mac>.<tailnet>.ts.net`, it must start with `https://`) and the token. "Test connection" calls `GET /harnesses`. Both are saved in `expo-secure-store`.
 
-To test without Tailscale, run `ngrok http 8787` and use its public URL as the server address. Do not pass `--basic-auth`: it uses the `Authorization` header the bearer token already uses. The tunnel is public with only the token in front of it, so stop it (Ctrl+C) when you are done and never leave it running unattended.
+To test without Tailscale, run `ngrok http 8787` and use its public URL as the server address. Do not pass `--basic-auth`: it uses the `Authorization` header the bearer token already uses. The tunnel is public with only the token in front of it, so stop it (Ctrl+C) when you are done and never leave it running unattended. ngrok also holds back small, infrequent SSE writes, so a status change can take seconds to reach the phone over it even though the connection looks alive; the app polls on a slow timer as a backstop, and Tailscale delivers pushes promptly.
 
 ## Keys
 

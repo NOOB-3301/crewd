@@ -43,7 +43,9 @@ export function useSessionList() {
     })
   }, [active, focused])
 
-  // Pull to refresh always asks once; while the stream is down or stalled that becomes the 3s poll.
+  // Pull to refresh always asks once. While the stream is down that becomes the 3s poll; while it is
+  // up a 30s backstop still runs, because a proxy that buffers small writes (ngrok does) can hold a
+  // session message for minutes while the connection looks healthy and the pings keep arriving.
   useEffect(() => {
     if (!active || !focused) return
     let gone = false
@@ -63,8 +65,7 @@ export function useSessionList() {
         .finally(() => !gone && setRefreshing(false))
     setRefreshing(true)
     load()
-    if (live) return () => void (gone = true)
-    const t = setInterval(load, 3000)
+    const t = setInterval(load, live ? 30_000 : 3000)
     return () => {
       gone = true
       clearInterval(t)
