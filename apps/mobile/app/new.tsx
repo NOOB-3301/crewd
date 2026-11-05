@@ -100,7 +100,7 @@ export default function NewSession() {
         id = (await createSession({ harness: h.id, cwd, model: model || undefined, permissionMode: h.kind === 'sdk' ? mode : undefined })).id
         setCreated({ id, cwd })
         // Only a list we actually saw rewrites the memory, so a pick made while it loads survives.
-        if (modelList) void rememberModel(h.id, model)
+        if (modelList && model) void rememberModel(h.id, model)
       }
       if (text.trim()) await send(id, text.trim())
       router.replace({ pathname: '/sessions/[id]', params: { id } })
@@ -110,7 +110,7 @@ export default function NewSession() {
       if (!(e instanceof Unreachable)) return setErr(errorMsg(e))
       // The daemon may have started it before the link dropped: look, instead of reporting a failure the list contradicts.
       const fresh = before && (await listSessions().catch(() => null))?.filter((s) => !before.has(s.id))
-      const late = fresh?.find((s) => s.harness === h.id) ?? fresh?.[0]
+      const late = fresh?.find((s) => s.harness === h.id && s.cwd === cwd) ?? fresh?.[0]
       if (late) return router.replace({ pathname: '/sessions/[id]', params: { id: late.id } })
       setErr(`${errorMsg(e)} The session may have started anyway, so check the list.`)
     }

@@ -1,6 +1,7 @@
 // The Sessions screen's only window onto the list. It is push-driven by GET /events (Phase 9) and falls
 // back to the Phase 5 poll when that stream is down, so keep everything list-shaped inside this hook.
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { useFocusEffect } from 'expo-router'
 import type { SessionMeta } from '@crewd/protocol'
 import { listSessions, Unreachable } from './api'
 import { subscribeAllSessions, useAppActive } from './stream'
@@ -18,10 +19,19 @@ export function useSessionList() {
   const [live, setLive] = useState(false)
   const active = useAppActive()
   const [nonce, setNonce] = useState(0)
+  // Phase 9.3: the list stream belongs to the list screen. Covered by a session or the new-session
+  // modal, it would sit next to that screen's own stream and poll for rows nobody is looking at.
+  const [focused, setFocused] = useState(true)
+  useFocusEffect(
+    useCallback(() => {
+      setFocused(true)
+      return () => setFocused(false)
+    }, []),
+  )
 
   // Open on the list screen, closed on background: the closer aborts the in-flight read.
   useEffect(() => {
-    if (!active) return
+    if (!active || !focused) return
     return subscribeAllSessions({
       snapshot: (list) => {
         setSessions(sortSessions(list))
@@ -31,11 +41,11 @@ export function useSessionList() {
         setSessions((prev) => sortSessions(prev.some((s) => s.id === m.id) ? prev.map((s) => (s.id === m.id ? m : s)) : [...prev, m])),
       live: setLive,
     })
-  }, [active])
+  }, [active, focused])
 
   // Pull to refresh always asks once; while the stream is down or stalled that becomes the 3s poll.
   useEffect(() => {
-    if (!active) return
+    if (!active || !focused) return
     let gone = false
     const load = () =>
       listSessions()
@@ -59,7 +69,7 @@ export function useSessionList() {
       gone = true
       clearInterval(t)
     }
-  }, [active, nonce, live])
+  }, [active, nonce, live, focused])
 
   return { sessions, err, refreshing, refresh: () => setNonce((n) => n + 1) }
 }

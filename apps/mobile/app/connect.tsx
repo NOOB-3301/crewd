@@ -24,7 +24,9 @@ export default function Connect() {
     try {
       await testConnection({ server, token })
       await saveCredentials({ server, token })
-      router.replace('/')
+      // REPLACE on an existing stack mints a second Sessions screen, so two list streams and two polls
+      // would live forever; coming back is the route that already exists.
+      saved ? router.back() : router.replace('/')
     } catch (e) {
       setErr(errorMsg(e))
     } finally {
@@ -64,7 +66,7 @@ export default function Connect() {
           {busy ? <ActivityIndicator color={c.bg} /> : <Text style={styles.buttonText}>Test connection</Text>}
         </Pressable>
         {!!saved && (
-          <Pressable hitSlop={10} onPress={() => router.replace('/')}>
+          <Pressable hitSlop={10} onPress={() => router.back()}>
             <Text style={styles.cancel}>Back</Text>
           </Pressable>
         )}

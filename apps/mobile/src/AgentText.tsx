@@ -39,16 +39,21 @@ const style = StyleSheet.create({
 
 const trim = (content: string) => (content.endsWith('\n') ? content.slice(0, -1) : content)
 
+const linkRule: RenderRules['link'] = (node, children) => (
+  <Text key={node.key} style={style.link} onPress={() => askOpen(node.attributes.href)}>
+    {children}
+  </Text>
+)
+
 const rules: RenderRules = {
   fence: (node) => <CodeBlock key={node.key} code={trim(node.content)} />,
   code_block: (node) => <CodeBlock key={node.key} code={trim(node.content)} />,
   // never rendered: a remote image is a fetch the agent chose, not the user (plan 6.6)
   image: () => null,
-  link: (node, children) => (
-    <Text key={node.key} style={style.link} onPress={() => askOpen(node.attributes.href)}>
-      {children}
-    </Text>
-  ),
+  link: linkRule,
+  // the library rewrites a link whose children hold an image or a hard break into `blocklink`, whose
+  // default handler calls Linking.openURL with no scheme check and no confirmation (plan 6.5)
+  blocklink: linkRule,
 }
 
 export default memo(function AgentText({ text, open }: { text: string; open: boolean }) {

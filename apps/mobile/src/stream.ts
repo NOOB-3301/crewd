@@ -42,6 +42,11 @@ export function subscribeSession(id: string, opts: { after?: number }, onLine: (
           goToConnect()
           return
         }
+        // A session that no longer exists will never answer: retrying keeps the radio on for nothing.
+        if (res.status === 404) {
+          stopped = true
+          return
+        }
         if (!res.ok || !res.body) throw new Error(`events ${res.status}`)
         delay = 250
         const decoder = new TextDecoder()

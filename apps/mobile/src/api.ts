@@ -78,21 +78,28 @@ type Init = {
   auth?: Credentials
   /** a 401 during the Connect screen's own test must show inline instead of re-entering it */
   on401?: 'connect' | 'throw'
+  /** an agent can take tens of seconds to be ready; nothing else may hang for that long */
+  timeoutMs?: number
 }
 
 async function request<T>(path: string, init: Init = {}): Promise<T> {
   const creds = init.auth ?? saved
   if (!creds) throw new Unreachable('No Mac configured yet.')
   const headers: Record<string, string> = { ...authHeaders(creds), ...(init.body === undefined ? {} : { 'content-type': 'application/json' }) }
+  const ac = new AbortController()
+  const timer = setTimeout(() => ac.abort(), init.timeoutMs ?? 20_000)
   let res: Awaited<ReturnType<typeof fetch>>
   try {
     res = await fetch(url(path, creds), {
       method: init.method ?? 'GET',
       headers,
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      signal: ac.signal,
     })
   } catch {
     throw new Unreachable(`Can't reach your Mac at ${creds.server}.`)
+  } finally {
+    clearTimeout(timer)
   }
   const data: any = await res.json().catch(() => null)
   if (res.status === 401) {
@@ -127,10 +134,14 @@ export const interrupt = (id: string) => request<unknown>(routes.interrupt(id), 
 export const harnesses = () => request<HarnessInfo[]>(routes.harnesses)
 /** May start an agent process to ask, so it can take seconds; results are cached 10 minutes server-side. */
 export const harnessModels = (id: string, cwd: string) =>
-  request<ModelList>(`${routes.harnessModels(id)}?cwd=${encodeURIComponent(cwd)}`)
+  request<ModelList>(`${routes.harnessModels(id)}?cwd=${encodeURIComponent(cwd)}`, { timeoutMs: 90_000 })
 /** Folders crewd has sessions in; the phone cannot browse the Mac's disk. */
 export const projects = () => request<ProjectInfo[]>(routes.projects)
 /** Waits for the agent to be ready, so callers show a spinner. */
-export const createSession = (body: CreateSessionBody) => request<SessionMeta>(routes.sessions, { method: 'POST', body })
-export const setMode = (id: string, mode: ModeId) => request<SessionMeta>(routes.mode(id), { method: 'POST', body: { mode } })
-export const setModel = (id: string, model: string) => request<SessionMeta>(routes.model(id), { method: 'POST', body: { model } })
+export const createSession = (body: CreateSessionBody) =>
+  request<SessionMeta>(routes.sessions, { method: 'POST', body, timeoutMs: 120_000 })
+/** An idle session is started again first, which is not quick. */
+export const setMode = (id: string, mode: ModeId) =>
+  request<SessionMeta>(routes.mode(id), { method: 'POST', body: { mode }, timeoutMs: 90_000 })
+export const setModel = (id: string, model: string) =>
+  request<SessionMeta>(routes.model(id), { method: 'POST', body: { model }, timeoutMs: 90_000 })

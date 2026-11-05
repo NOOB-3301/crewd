@@ -34,8 +34,6 @@ const status: Record<SessionStatus, { glyph: string; color: string }> = {
   dead: { glyph: '×', color: c.faint },
 }
 
-export const statusColor = (s: SessionStatus) => status[s].color
-
 export function StatusDot({ status: s }: { status: SessionStatus }) {
   return <Text style={{ color: status[s].color, fontSize: 13 }}>{status[s].glyph}</Text>
 }
